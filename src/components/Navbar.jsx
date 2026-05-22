@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth'
 
 const links = [
   { to: '/orders',       icon: '📋', label: 'Danh sách đơn' },
-  { to: '/invoice-test', icon: '🔬', label: 'Test API'      },
+  // { to: '/invoice-test', icon: '🔬', label: 'Test API'      },
 ]
 
 export default function Navbar() {
