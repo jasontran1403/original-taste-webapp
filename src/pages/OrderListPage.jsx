@@ -1,3 +1,4 @@
+import ReactDOM from 'react-dom'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Navbar from '../components/Navbar'
 import InvoiceModal from '../components/InvoiceModal'
@@ -218,21 +219,61 @@ function InvoiceDetailBadge({ o }) {
   const [pos, setPos] = useState({ top: 0, left: 0 })
   const btnRef = useRef()
 
-  const handleClick = () => {
-    if (!show && btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect()
-      setPos({ top: r.bottom + 4, left: r.left })
+  const updatePosition = () => {
+    if (!btnRef.current) return
+
+    const r = btnRef.current.getBoundingClientRect()
+
+    const POPUP_WIDTH = 320
+    const POPUP_HEIGHT = 220
+
+    let left = r.left
+    let top = r.bottom + 8
+
+    // nếu đụng mép phải
+    if (left + POPUP_WIDTH > window.innerWidth) {
+      left = window.innerWidth - POPUP_WIDTH - 12
     }
-    setShow(s => !s)
+
+    // nếu không đủ chỗ bên dưới => hiện phía trên
+    if (top + POPUP_HEIGHT > window.innerHeight) {
+      top = r.top - POPUP_HEIGHT - 8
+    }
+
+    setPos({ left, top })
   }
 
+  const handleClick = () => {
+    if (!show) {
+      updatePosition()
+    }
+    setShow(v => !v)
+  }
+
+  useEffect(() => {
+    if (!show) return
+
+    window.addEventListener('scroll', updatePosition, true)
+    window.addEventListener('resize', updatePosition)
+
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true)
+      window.removeEventListener('resize', updatePosition)
+    }
+  }, [show])
+
   if (!o.invoiceSubmitted) {
-    return <span className="badge bg-gray-100 text-gray-400 text-xs">Chưa có</span>
+    return (
+      <span className="badge bg-gray-100 text-gray-400 text-xs">
+        Chưa có
+      </span>
+    )
   }
 
   const d = o.invoiceDetail || {}
+
   return (
-    <div className="inline-block">
+    <>
       <button
         ref={btnRef}
         onClick={handleClick}
@@ -240,21 +281,67 @@ function InvoiceDetailBadge({ o }) {
       >
         🏢 Có thông tin
       </button>
-      {show && (
-        <div
-          className="fixed z-50 bg-white rounded-xl shadow-xl border border-gray-100 p-3 w-64 text-xs space-y-1.5"
-          style={{ top: pos.top, left: pos.left }}
-          onMouseLeave={() => setShow(false)}
-        >
-          <p className="font-semibold text-gray-800 mb-2">Thông tin xuất hóa đơn</p>
-          <div><span className="text-gray-400">MST: </span><span className="font-mono font-medium">{d.taxCode}</span></div>
-          <div><span className="text-gray-400">Công ty: </span><span className="font-medium">{d.companyName}</span></div>
-          <div><span className="text-gray-400">Email: </span><span className="text-blue-600">{d.email}</span></div>
-          <div><span className="text-gray-400">Địa chỉ: </span><span className="text-blue-600">{d.address}</span></div>
-          {d.submittedAt && <div className="text-gray-400 pt-1 border-t">Gửi lúc: {fmtDateTime(d.submittedAt)}</div>}
-        </div>
-      )}
-    </div>
+
+      {show &&
+        ReactDOM.createPortal(
+          <>
+            {/* backdrop để click ngoài đóng */}
+            <div
+              className="fixed inset-0 z-[9998]"
+              onClick={() => setShow(false)}
+            />
+
+            <div
+              className="fixed z-[9999] bg-white rounded-xl shadow-2xl border border-gray-100 p-4 w-80 text-sm"
+              style={{
+                top: pos.top,
+                left: pos.left
+              }}
+            >
+              <p className="font-semibold text-gray-800 mb-3">
+                Thông tin xuất hóa đơn
+              </p>
+
+              <div className="space-y-2">
+                <div>
+                  <span className="text-gray-500">MST:</span>
+                  <div className="font-mono font-medium">
+                    {d.taxCode}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-gray-500">Công ty:</span>
+                  <div className="font-medium">
+                    {d.companyName}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-gray-500">Email:</span>
+                  <div className="text-blue-600 break-all">
+                    {d.email}
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-gray-500">Địa chỉ:</span>
+                  <div>
+                    {d.address}
+                  </div>
+                </div>
+
+                {d.submittedAt && (
+                  <div className="pt-2 border-t text-xs text-gray-400">
+                    Gửi lúc: {fmtDateTime(d.submittedAt)}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>,
+          document.body
+        )}
+    </>
   )
 }
 
