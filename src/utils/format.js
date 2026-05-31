@@ -11,8 +11,9 @@ export const fmtDateTime = ms => {
 }
 
 export const todayVN = () => {
-  const d = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Ho_Chi_Minh'}))
-  return d.toISOString().slice(0,10)
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh'
+  }).format(new Date())
 }
 
 /** Kiểm tra còn trong 6 giờ kể từ khi tạo đơn */

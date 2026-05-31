@@ -236,6 +236,7 @@ function InvoiceDetailBadge({ o }) {
           <div><span className="text-gray-400">MST: </span><span className="font-mono font-medium">{d.taxCode}</span></div>
           <div><span className="text-gray-400">Công ty: </span><span className="font-medium">{d.companyName}</span></div>
           <div><span className="text-gray-400">Email: </span><span className="text-blue-600">{d.email}</span></div>
+          <div><span className="text-gray-400">Địa chỉ: </span><span className="text-blue-600">{d.address}</span></div>
           {d.submittedAt && <div className="text-gray-400 pt-1 border-t">Gửi lúc: {fmtDateTime(d.submittedAt)}</div>}
         </div>
       )}
