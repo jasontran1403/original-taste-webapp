@@ -2,7 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
 const links = [
-  { to: '/orders',       icon: '📋', label: 'Danh sách đơn' },
+  // { to: '/orders',       icon: '📋', label: 'Danh sách đơn' },
   // { to: '/invoice-test', icon: '🔬', label: 'Test API'      },
 ]
 
@@ -21,7 +21,7 @@ export default function Navbar() {
 
         {/* Nav links */}
         <nav className="flex items-center gap-1">
-          {links.map(({ to, icon, label }) => (
+          {/* {links.map(({ to, icon, label }) => (
             <NavLink key={to} to={to}
               className={({ isActive }) =>
                 `flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors
@@ -30,7 +30,7 @@ export default function Navbar() {
             >
               <span>{icon}</span><span>{label}</span>
             </NavLink>
-          ))}
+          ))} */}
         </nav>
 
         {/* Spacer + logout */}
