@@ -8,33 +8,33 @@ import { fmtCurrency, fmtDateTime, todayVN } from '../utils/format'
 
 /* ── constants ── */
 const STATUS = {
-  COMPLETED: { l:'Hoàn thành', cls:'bg-green-100 text-green-700' },
-  CANCELLED:  { l:'Đã hủy',    cls:'bg-red-100 text-red-600' },
-  PENDING:    { l:'Chờ',       cls:'bg-yellow-100 text-yellow-700' },
-  IN_PROGRESS:{ l:'Xử lý',    cls:'bg-blue-100 text-blue-700' },
+  COMPLETED: { l: 'Hoàn thành', cls: 'bg-green-100 text-green-700' },
+  CANCELLED: { l: 'Đã hủy', cls: 'bg-red-100 text-red-600' },
+  PENDING: { l: 'Chờ', cls: 'bg-yellow-100 text-yellow-700' },
+  IN_PROGRESS: { l: 'Xử lý', cls: 'bg-blue-100 text-blue-700' },
 }
 const EINV = {
-  DRAFT:  { l:'Nháp',           cls:'bg-gray-100 text-gray-600' },
-  ISSUED: { l:'Đã phát hành',   cls:'bg-emerald-100 text-emerald-700' },
-  ERROR:  { l:'Lỗi',            cls:'bg-red-100 text-red-600' },
+  DRAFT: { l: 'Nháp', cls: 'bg-gray-100 text-gray-600' },
+  ISSUED: { l: 'Đã phát hành', cls: 'bg-emerald-100 text-emerald-700' },
+  ERROR: { l: 'Lỗi', cls: 'bg-red-100 text-red-600' },
 }
-const MONTHS = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6',
-                'Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12']
-const DAYS   = ['CN','T2','T3','T4','T5','T6','T7']
+const MONTHS = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6',
+  'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12']
+const DAYS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7']
 
 function rowCls(o) {
   if (o.eInvoiceStatus === 'ISSUED') return 'bg-emerald-50'
-  if (o.invoiceSubmitted)            return 'bg-orange-50'
-  if (o.invoiceDeadlineExpired)      return 'bg-yellow-50'
+  if (o.invoiceSubmitted) return 'bg-orange-50'
+  if (o.invoiceDeadlineExpired) return 'bg-yellow-50'
   return ''
 }
 
 /* ── DateRangePicker ────────────────────────────────────────────── */
 function DateRangePicker({ fromDate, toDate, onChange }) {
-  const [open, setOpen]       = useState(false)
+  const [open, setOpen] = useState(false)
   const [hovered, setHovered] = useState(null)
   const [selecting, setSelecting] = useState(null) // first date chosen, awaiting second
-  const [viewYear, setViewYear]   = useState(new Date().getFullYear())
+  const [viewYear, setViewYear] = useState(new Date().getFullYear())
   const [viewMonth, setViewMonth] = useState(new Date().getMonth())
   const ref = useRef()
 
@@ -46,10 +46,18 @@ function DateRangePicker({ fromDate, toDate, onChange }) {
   }, [])
 
   const parseD = s => s ? new Date(s + 'T00:00:00') : null
-  const toStr  = d => d ? d.toISOString().slice(0, 10) : ''
+
+  const toStr = d => {
+    if (!d) return ''
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+
 
   const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate()
-  const firstDOW    = (y, m) => new Date(y, m, 1).getDay()
+  const firstDOW = (y, m) => new Date(y, m, 1).getDay()
 
   const isBetween = (d, a, b) => {
     if (!a || !b) return false
@@ -80,13 +88,13 @@ function DateRangePicker({ fromDate, toDate, onChange }) {
   }
 
   const from = parseD(fromDate)
-  const to   = parseD(toDate)
-  const sel  = selecting ? parseD(selecting) : null
-  const hov  = hovered   ? parseD(hovered)   : null
+  const to = parseD(toDate)
+  const sel = selecting ? parseD(selecting) : null
+  const hov = hovered ? parseD(hovered) : null
 
   // Build calendar grid
   const totalDays = daysInMonth(viewYear, viewMonth)
-  const startDOW  = firstDOW(viewYear, viewMonth)
+  const startDOW = firstDOW(viewYear, viewMonth)
   const cells = []
   for (let i = 0; i < startDOW; i++) cells.push(null)
   for (let d = 1; d <= totalDays; d++) cells.push(new Date(viewYear, viewMonth, d))
@@ -98,13 +106,13 @@ function DateRangePicker({ fromDate, toDate, onChange }) {
   const dayCls = (d) => {
     if (!d) return ''
     const ds = toStr(d)
-    const isFrom    = fromDate === ds
-    const isTo      = toDate   === ds
-    const isSel     = selecting === ds
+    const isFrom = fromDate === ds
+    const isTo = toDate === ds
+    const isSel = selecting === ds
     const isInRange = !selecting
       ? (from && to && isBetween(d, from, to))
       : (sel && hov && isBetween(d, sel, hov))
-    const isHov     = hovered === ds
+    const isHov = hovered === ds
 
     let cls = 'w-8 h-8 flex items-center justify-center text-xs rounded-full cursor-pointer select-none transition-colors '
     if (isFrom || isTo || isSel)
@@ -126,11 +134,11 @@ function DateRangePicker({ fromDate, toDate, onChange }) {
       >
         <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
         </svg>
         <span className="font-medium">{label}</span>
         <svg className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7"/>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
@@ -179,21 +187,27 @@ function DateRangePicker({ fromDate, toDate, onChange }) {
           {/* Quick presets */}
           <div className="mt-3 pt-3 border-t border-gray-100 flex flex-wrap gap-1.5">
             {[
-              { l:'Hôm nay',   fn:() => { const t=todayVN(); onChange(t,t); setOpen(false) } },
-              { l:'7 ngày',    fn:() => {
-                const t=new Date(); const f=new Date(t); f.setDate(f.getDate()-6)
-                onChange(toStr(f), toStr(t)); setOpen(false)
-              }},
-              { l:'30 ngày',   fn:() => {
-                const t=new Date(); const f=new Date(t); f.setDate(f.getDate()-29)
-                onChange(toStr(f), toStr(t)); setOpen(false)
-              }},
-              { l:'Tháng này', fn:() => {
-                const t=new Date()
-                const f=new Date(t.getFullYear(), t.getMonth(), 1)
-                onChange(toStr(f), toStr(t)); setOpen(false)
-              }},
-            ].map(({l,fn}) => (
+              { l: 'Hôm nay', fn: () => { const t = todayVN(); onChange(t, t); setOpen(false) } },
+              {
+                l: '7 ngày', fn: () => {
+                  const t = new Date(); const f = new Date(t); f.setDate(f.getDate() - 6)
+                  onChange(toStr(f), toStr(t)); setOpen(false)
+                }
+              },
+              {
+                l: '30 ngày', fn: () => {
+                  const t = new Date(); const f = new Date(t); f.setDate(f.getDate() - 29)
+                  onChange(toStr(f), toStr(t)); setOpen(false)
+                }
+              },
+              {
+                l: 'Tháng này', fn: () => {
+                  const t = new Date()
+                  const f = new Date(t.getFullYear(), t.getMonth(), 1)
+                  onChange(toStr(f), toStr(t)); setOpen(false)
+                }
+              },
+            ].map(({ l, fn }) => (
               <button key={l} onClick={fn}
                 className="px-2.5 py-1 text-xs rounded-md bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors">
                 {l}
@@ -247,17 +261,17 @@ function InvoiceDetailBadge({ o }) {
 /* ── Main page ──────────────────────────────────────────────────── */
 export default function OrderListPage() {
   const today = todayVN()
-  const [orders,   setOrders]   = useState([])
-  const [meta,     setMeta]     = useState({ total:0, pages:0 })
+  const [orders, setOrders] = useState([])
+  const [meta, setMeta] = useState({ total: 0, pages: 0 })
   const [fromDate, setFromDate] = useState(today)
-  const [toDate,   setToDate]   = useState(today)
-  const [page,     setPage]     = useState(0)
-  const [loading,  setLoading]  = useState(false)
-  const [modal,    setModal]    = useState(null)  // order object để mở InvoiceModal
-  const [toast,    setToast]    = useState(null)
+  const [toDate, setToDate] = useState(today)
+  const [page, setPage] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [modal, setModal] = useState(null)  // order object để mở InvoiceModal
+  const [toast, setToast] = useState(null)
 
-  const showToast = (msg, ok=true) => {
-    setToast({msg,ok}); setTimeout(()=>setToast(null), 4000)
+  const showToast = (msg, ok = true) => {
+    setToast({ msg, ok }); setTimeout(() => setToast(null), 4000)
   }
 
   const load = useCallback(async () => {
@@ -266,8 +280,8 @@ export default function OrderListPage() {
       const r = await getInvoiceOrders(null, page, 50, fromDate, toDate)
       const d = r.data?.data
       setOrders(d?.content || [])
-      setMeta({ total: d?.totalElements||0, pages: d?.totalPages||0 })
-    } catch(e) { showToast('Lỗi tải dữ liệu: '+e.message, false) }
+      setMeta({ total: d?.totalElements || 0, pages: d?.totalPages || 0 })
+    } catch (e) { showToast('Lỗi tải dữ liệu: ' + e.message, false) }
     finally { setLoading(false) }
   }, [fromDate, toDate, page])
 
@@ -301,7 +315,7 @@ export default function OrderListPage() {
             <DateRangePicker fromDate={fromDate} toDate={toDate} onChange={handleRangeChange} />
             <button onClick={load} className="btn-secondary">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
               Làm mới
             </button>
@@ -311,20 +325,21 @@ export default function OrderListPage() {
         {/* Legend */}
         <div className="flex flex-wrap gap-4 mb-4 text-xs text-gray-500">
           {[
-            {cls:'bg-emerald-100 border-emerald-300', lbl:'Đã xuất hóa đơn'},
-            {cls:'bg-orange-100 border-orange-300',   lbl:'Có thông tin xuất HĐ'},
-            {cls:'bg-yellow-100 border-yellow-300',   lbl:'Hết hạn nhập (12h)'},
-            {cls:'bg-white border-gray-200',           lbl:'Bình thường'},
-          ].map(({cls,lbl}) => (
+            { cls: 'bg-emerald-100 border-emerald-300', lbl: 'Đã xuất hóa đơn' },
+            { cls: 'bg-orange-100 border-orange-300', lbl: 'Có thông tin xuất HĐ' },
+            { cls: 'bg-yellow-100 border-yellow-300', lbl: 'Hết hạn nhập (12h)' },
+            { cls: 'bg-white border-gray-200', lbl: 'Bình thường' },
+          ].map(({ cls, lbl }) => (
             <div key={lbl} className="flex items-center gap-1.5">
-              <span className={`w-3 h-3 rounded border ${cls} shrink-0`}/>
+              <span className={`w-3 h-3 rounded border ${cls} shrink-0`} />
               {lbl}
             </div>
           ))}
         </div>
 
         {/* Table */}
-        <div className="card overflow-hidden">
+        <div className="card overflow-hidden min-h-[40svh]">
+
           {loading ? (
             <div className="py-20 text-center text-gray-400">
               <div className="text-4xl mb-3 animate-pulse">⏳</div>
@@ -341,7 +356,7 @@ export default function OrderListPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
-                    {['Mã đơn / Cửa hàng','Khách hàng','Thông tin HĐ','Tiền hàng','VAT','Thành tiền','Thời gian tạo','Hành động'].map(h => (
+                    {['Mã đơn / Cửa hàng', 'Khách hàng', 'Thông tin HĐ', 'Tiền hàng', 'VAT', 'Thành tiền', 'Thời gian tạo', 'Hành động'].map(h => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -435,7 +450,7 @@ export default function OrderListPage() {
                                 try {
                                   const url = await getInvoicePdf(o.eInvoiceNo)
                                   window.open(url, '_blank')
-                                } catch(e) { showToast('❌ Không lấy được PDF', false) }
+                                } catch (e) { showToast('❌ Không lấy được PDF', false) }
                               }}
                               className="px-2.5 py-1.5 text-xs font-medium rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors flex items-center gap-1 text-left">
                               📄 Hóa đơn
@@ -455,18 +470,18 @@ export default function OrderListPage() {
         {/* Pagination */}
         {meta.pages > 1 && (
           <div className="flex justify-center gap-2 mt-5">
-            <button onClick={() => setPage(p => Math.max(0, p-1))} disabled={page === 0}
+            <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
               className="w-9 h-9 rounded-lg border bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-30 transition-colors text-sm">
               ‹
             </button>
-            {Array.from({length: Math.min(meta.pages, 10)}, (_, i) => (
+            {Array.from({ length: Math.min(meta.pages, 10) }, (_, i) => (
               <button key={i} onClick={() => setPage(i)}
                 className={`w-9 h-9 rounded-lg text-sm font-medium border transition-colors
-                  ${page===i ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
-                {i+1}
+                  ${page === i ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
+                {i + 1}
               </button>
             ))}
-            <button onClick={() => setPage(p => Math.min(meta.pages-1, p+1))} disabled={page >= meta.pages-1}
+            <button onClick={() => setPage(p => Math.min(meta.pages - 1, p + 1))} disabled={page >= meta.pages - 1}
               className="w-9 h-9 rounded-lg border bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-30 transition-colors text-sm">
               ›
             </button>
