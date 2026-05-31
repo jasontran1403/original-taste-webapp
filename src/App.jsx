@@ -6,7 +6,6 @@ import InvoiceTestPage from './pages/InvoiceTestPage'
 import PublicInvoicePage from './pages/PublicInvoicePage'
 import NotFoundPage from './pages/NotFoundPage'
 
-// Guard: chỉ ACCOUNTANT / SUPERADMIN mới vào được
 function Protected({ children }) {
   const { auth, isAccountant } = useAuth()
   const loc = useLocation()
@@ -16,31 +15,27 @@ function Protected({ children }) {
 }
 
 export default function App() {
-  // /?orderCode=xxx → Public invoice form
-  const params = new URLSearchParams(window.location.search)
-  const orderCode = params.get('orderCode')
-  if (window.location.pathname === '/' && orderCode) {
-    return (
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<PublicInvoicePage orderCode={orderCode} />} />
-        </Routes>
-      </BrowserRouter>
-    )
-  }
-
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public */}
+        {/*
+          Public: form xuất hóa đơn — truy cập qua QR trên bill
+          Route: /invoice/:token
+          token = invoice_token (UUID ngẫu nhiên từ backend), VD:
+            https://www.original-taste.vn/invoice/550e8400-e29b-41d4-a716-446655440000
+        */}
+        <Route path="/invoice/:token" element={<PublicInvoicePage />} />
+
+        {/* Auth */}
         <Route path="/login" element={<LoginPage />} />
 
         {/* Protected — ACCOUNTANT only */}
-        <Route path="/orders" element={<Protected><OrderListPage /></Protected>} />
+        <Route path="/orders"       element={<Protected><OrderListPage /></Protected>} />
         <Route path="/invoice-test" element={<Protected><InvoiceTestPage /></Protected>} />
 
-        {/* Catch-all → 404 */}
-        <Route path="*" element={<NotFoundPage />} />
+        {/* Root → 404 (không còn dùng ?orderCode= nữa) */}
+        <Route path="/"  element={<NotFoundPage />} />
+        <Route path="*"  element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>
   )

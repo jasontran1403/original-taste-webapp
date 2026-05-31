@@ -15,8 +15,28 @@ export const todayVN = () => {
   return d.toISOString().slice(0,10)
 }
 
-export const within12h = createdAtMs => {
+/** Kiểm tra còn trong 6 giờ kể từ khi tạo đơn */
+export const within6h = createdAtMs => {
   if (!createdAtMs) return false
-  const nowVN = new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Ho_Chi_Minh'}))
-  return (nowVN - new Date(createdAtMs)) < 12*3600*1000
+  return (Date.now() - createdAtMs) < 6 * 3600 * 1000
+}
+
+/** @deprecated dùng within6h */
+export const within12h = within6h
+
+/** Tính thời gian còn lại (ms) trong vòng 6h */
+export const timeLeftMs = createdAtMs => {
+  if (!createdAtMs) return 0
+  const left = 6 * 3600 * 1000 - (Date.now() - createdAtMs)
+  return Math.max(0, left)
+}
+
+/** Format còn lại thành "Xh Ym" */
+export const fmtTimeLeft = createdAtMs => {
+  const ms = timeLeftMs(createdAtMs)
+  if (ms <= 0) return '0 phút'
+  const h = Math.floor(ms / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  if (h > 0) return `${h}h ${m}m`
+  return `${m} phút`
 }

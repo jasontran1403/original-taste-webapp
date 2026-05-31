@@ -1,197 +1,375 @@
 import { useState, useEffect } from 'react'
+import { useParams } from 'react-router-dom'
 import { getPublicOrder, submitInvoiceInfo } from '../services/api'
-import { fmtCurrency, fmtDateTime, within12h } from '../utils/format'
+import { fmtCurrency, fmtDateTime, within6h, fmtTimeLeft } from '../utils/format'
 
-function ExpiredPage() {
+// ─── Countdown hook ────────────────────────────────────────────
+function useCountdown(createdAt) {
+  const [left, setLeft] = useState(() => fmtTimeLeft(createdAt))
+  useEffect(() => {
+    if (!createdAt) return
+    const t = setInterval(() => setLeft(fmtTimeLeft(createdAt)), 30_000)
+    return () => clearInterval(t)
+  }, [createdAt])
+  return left
+}
+
+// ─── Status badge ───────────────────────────────────────────────
+function StatusBadge({ status }) {
+  const map = {
+    ISSUED: { bg:'bg-emerald-50', text:'text-emerald-700', border:'border-emerald-200', dot:'bg-emerald-500', label:'Đã phát hành' },
+    DRAFT:  { bg:'bg-sky-50',     text:'text-sky-700',     border:'border-sky-200',     dot:'bg-sky-400',    label:'Nháp' },
+    ERROR:  { bg:'bg-red-50',     text:'text-red-700',     border:'border-red-200',     dot:'bg-red-500',    label:'Lỗi' },
+  }
+  const s = map[status] || { bg:'bg-gray-50', text:'text-gray-600', border:'border-gray-200', dot:'bg-gray-400', label: status || '—' }
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="text-center max-w-sm">
-        <div className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl">⏰</div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-3">Đã quá thời hạn</h1>
-        <p className="text-gray-500 text-sm leading-relaxed">
-          Đơn hàng này đã quá 12 giờ kể từ thời điểm tạo.<br/>
-          Không thể nhập thông tin xuất hóa đơn nữa.
-        </p>
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${s.bg} ${s.text} ${s.border}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+      {s.label}
+    </span>
+  )
+}
+
+// ─── Section card ────────────────────────────────────────────────
+function SectionCard({ icon, title, children, className = '' }) {
+  return (
+    <div className={`bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden ${className}`}>
+      <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-50">
+        <span className="text-lg">{icon}</span>
+        <h2 className="font-semibold text-gray-800 text-sm tracking-wide">{title}</h2>
+      </div>
+      <div className="px-5 py-4">{children}</div>
+    </div>
+  )
+}
+
+// ─── Row pair ────────────────────────────────────────────────────
+function InfoRow({ label, value, accent }) {
+  return (
+    <div className="flex justify-between items-start py-2 border-b border-gray-50 last:border-0">
+      <span className="text-xs text-gray-400 font-medium shrink-0 mr-4">{label}</span>
+      <span className={`text-sm font-semibold text-right ${accent ? 'text-blue-700' : 'text-gray-800'}`}>{value || '—'}</span>
+    </div>
+  )
+}
+
+// ─── States ─────────────────────────────────────────────────────
+function LoadingState() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50/30 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-12 h-12 border-3 border-blue-200 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" style={{borderWidth:'3px'}} />
+        <p className="text-gray-400 text-sm">Đang tải đơn hàng...</p>
       </div>
     </div>
   )
 }
 
-export default function PublicInvoicePage({ orderCode }) {
-  const [order,   setOrder]   = useState(null)
-  const [status,  setStatus]  = useState('loading') // loading | ok | expired | error | submitted
-  const [form,    setForm]    = useState({ taxCode:'', companyName:'', invoiceEmail:'' })
-  const [submitting, setSub]  = useState(false)
-  const [submitOk, setSubOk]  = useState(false)
-  const [err,     setErr]     = useState('')
-
-  useEffect(() => {
-    if (!orderCode) { setStatus('error'); return }
-    getPublicOrder(orderCode).then(r => {
-      const d = r.data?.data
-      if (!d) { setStatus('error'); return }
-      setOrder(d)
-      if (d.invoiceSubmitted) { setStatus('submitted'); return }
-      // Kiểm tra 12h theo giờ GMT+7 trên client (double-check; server cũng check)
-      if (!within12h(d.createdAt)) { setStatus('expired'); return }
-      setStatus('ok')
-    }).catch(() => setStatus('error'))
-  }, [orderCode])
-
-  const handleSubmit = async e => {
-    e.preventDefault()
-    if (!form.taxCode.trim()||!form.companyName.trim()||!form.invoiceEmail.trim()) {
-      setErr('Vui lòng điền đầy đủ thông tin'); return
-    }
-    setSub(true); setErr('')
-    try {
-      await submitInvoiceInfo(orderCode, form)
-      setSubOk(true); setStatus('submitted')
-      // Reload order info
-      const r = await getPublicOrder(orderCode)
-      if (r.data?.data) setOrder(r.data.data)
-    } catch(e) {
-      setErr(e.response?.data?.message || e.message)
-    } finally { setSub(false) }
-  }
-
-  if (status === 'loading') return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="text-center text-gray-400">
-        <div className="text-5xl mb-3 animate-pulse">⏳</div>
-        <p>Đang tải thông tin đơn hàng...</p>
-      </div>
-    </div>
-  )
-
-  if (status === 'expired') return <ExpiredPage />
-
-  if (status === 'error' || !order) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="text-center max-w-sm">
-        <div className="text-6xl mb-4">❌</div>
-        <h1 className="text-xl font-bold text-red-700 mb-2">Không tìm thấy đơn hàng</h1>
-        <p className="text-gray-500 text-sm">Mã đơn hàng không hợp lệ hoặc đã bị xóa.</p>
-      </div>
-    </div>
-  )
-
+function ErrorState({ message }) {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-gray-50 py-8 px-4">
-      <div className="max-w-lg mx-auto space-y-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-red-50/30 flex items-center justify-center p-6">
+      <div className="text-center max-w-xs">
+        <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-5 text-3xl">🔍</div>
+        <h1 className="text-lg font-bold text-gray-900 mb-2">Không tìm thấy đơn hàng</h1>
+        <p className="text-gray-400 text-sm leading-relaxed">{message || 'Mã đơn hàng không hợp lệ hoặc đã bị xóa.'}</p>
+      </div>
+    </div>
+  )
+}
 
-        {/* Header */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-blue-600 rounded-2xl shadow-lg mb-4 text-2xl">🧾</div>
-          <h1 className="text-xl font-bold text-gray-900">Yêu cầu xuất hóa đơn</h1>
-          <p className="text-gray-500 text-sm mt-1">Đơn hàng #{order.orderCode}</p>
+function ExpiredState({ order }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-amber-50/30 py-8 px-4">
+      <div className="max-w-md mx-auto space-y-4">
+        <div className="text-center py-6">
+          <div className="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-4 text-3xl">⏰</div>
+          <h1 className="text-xl font-bold text-gray-900 mb-2">Hết hạn xuất hóa đơn</h1>
+          <p className="text-gray-500 text-sm leading-relaxed">
+            Đơn hàng đã quá <strong>6 giờ</strong> kể từ thời điểm tạo.<br/>
+            Không thể nhập thông tin xuất hóa đơn nữa.
+          </p>
         </div>
+        {order && <OrderSummaryCard order={order} />}
+        <p className="text-center text-xs text-gray-400 pt-2">Liên hệ nhân viên nếu cần hỗ trợ.</p>
+      </div>
+    </div>
+  )
+}
 
-        {/* Order info */}
-        <div className="card p-5">
-          <h2 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <span>📋</span> Thông tin đơn hàng
-          </h2>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-            {[
-              ['Mã đơn',      order.orderCode],
-              ['Thời gian',   fmtDateTime(order.createdAt)],
-              ['Khách hàng',  order.customerName||'—'],
-              ['Số điện thoại',order.customerPhone||'—'],
-              ['Thanh toán',  order.paymentMethod||'—'],
-              ['Tổng tiền',   fmtCurrency(order.finalAmount)],
-            ].map(([l,v])=>(
-              <div key={l}>
-                <p className="text-xs text-gray-400 font-medium">{l}</p>
-                <p className="text-sm text-gray-900 font-semibold mt-0.5">{v}</p>
+// ─── Order summary ───────────────────────────────────────────────
+function OrderSummaryCard({ order }) {
+  const srcLabel = s => ({ TAKE_AWAY:'Mang về', DINE_IN:'Tại quầy', SHOPEE_FOOD:'Shopee Food', GRAB_FOOD:'Grab Food' })[s] || s
+  const pmLabel  = m => ({ CASH:'Tiền mặt', TRANSFER:'Chuyển khoản', BANK_TRANSFER:'Chuyển khoản', MOMO:'MoMo', VNPAY:'VNPay', ZALOPAY:'ZaloPay' })[m] || m
+  return (
+    <SectionCard icon="🧾" title="Thông tin đơn hàng">
+      <InfoRow label="Mã đơn"          value={order.orderCode} />
+      {order.appOrderCode &&            <InfoRow label="Mã App"         value={order.appOrderCode} />}
+      <InfoRow label="Thời gian"        value={fmtDateTime(order.createdAt)} />
+      <InfoRow label="Loại đơn"         value={srcLabel(order.orderSource)} />
+      {order.customerName  &&           <InfoRow label="Khách hàng"     value={order.customerName} />}
+      {order.customerPhone &&           <InfoRow label="Số điện thoại"  value={order.customerPhone} />}
+      <InfoRow label="Thanh toán"       value={pmLabel(order.paymentMethod)} />
+      {order.discountAmount > 0 &&      <InfoRow label="Giảm giá"       value={`-${fmtCurrency(order.discountAmount)}`} />}
+      {order.totalVatAmount > 0 &&      <InfoRow label="VAT (đã gộp)"   value={fmtCurrency(order.totalVatAmount)} />}
+      <InfoRow label="Tổng thanh toán"  value={fmtCurrency(order.finalAmount)} accent />
+      {order.items?.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Chi tiết món</p>
+          <div className="space-y-2.5">
+            {order.items.map((item, i) => (
+              <div key={i} className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{item.productName}</p>
+                  <p className="text-xs text-gray-400">{fmtCurrency(item.finalUnitPrice)} × {item.quantity}</p>
+                </div>
+                <p className="text-sm font-semibold text-gray-900 shrink-0">{fmtCurrency(item.subtotal)}</p>
               </div>
             ))}
           </div>
+        </div>
+      )}
+    </SectionCard>
+  )
+}
 
-          {/* Items */}
-          {order.items?.length > 0 && (
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Chi tiết sản phẩm</p>
-              <div className="space-y-2">
-                {order.items.map((item,i) => (
-                  <div key={i} className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-800">{item.productName}</p>
-                      <p className="text-xs text-gray-400">{fmtCurrency(item.finalUnitPrice)} × {item.quantity}</p>
-                    </div>
-                    <p className="text-sm font-semibold text-gray-900">{fmtCurrency(item.subtotal)}</p>
-                  </div>
-                ))}
-              </div>
+// ─── E-Invoice card ───────────────────────────────────────────────
+function EInvoiceCard({ order }) {
+  if (!order.eInvoiceNo) return null
+  const BASE = import.meta.env.VITE_API_URL || ''
+  return (
+    <SectionCard icon="📄" title="Hóa đơn điện tử">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p className="text-xs text-gray-400">Số hóa đơn</p>
+          <p className="text-base font-bold text-gray-900 mt-0.5">{order.eInvoiceNo}</p>
+        </div>
+        <StatusBadge status={order.eInvoiceStatus} />
+      </div>
+      {order.eInvoiceIssuedDate && (
+        <p className="text-xs text-gray-400 mb-4">Phát hành: {fmtDateTime(order.eInvoiceIssuedDate)}</p>
+      )}
+      {order.eInvoiceStatus === 'ISSUED' && (
+        <div className="flex gap-2">
+          <a href={`${BASE}/api/pos/einvoice/${order.eInvoiceNo}/pdf`} target="_blank" rel="noreferrer"
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors">
+            <span>⬇️</span> Tải PDF
+          </a>
+          <a href={`${BASE}/api/pos/einvoice/${order.eInvoiceNo}/xml`} target="_blank" rel="noreferrer"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-200 text-gray-600 text-sm font-medium rounded-xl hover:bg-gray-50 transition-colors">
+            XML
+          </a>
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
+// ─── FormField — ĐỊNH NGHĨA NGOÀI component chính ────────────────
+// Quan trọng: nếu định nghĩa bên trong PublicInvoicePage,
+// mỗi keystroke tạo lại function mới → React unmount/remount input → mất focus.
+const LABELS = {
+  taxCode:      'Mã số thuế *',
+  companyName:  'Tên công ty / Tổ chức *',
+  address:      'Địa chỉ công ty',
+  invoiceEmail: 'Email nhận hóa đơn *',
+}
+const PLACEHOLDERS = {
+  taxCode:      '0100109106',
+  companyName:  'Công ty TNHH ABC',
+  address:      '123 Nguyễn Huệ, Q1, TP.HCM',
+  invoiceEmail: 'ketoan@congty.vn',
+}
+
+function FormField({ fieldKey, value, error, onChange }) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+        {LABELS[fieldKey]}
+      </label>
+      <input
+        type={fieldKey === 'invoiceEmail' ? 'email' : 'text'}
+        value={value}
+        placeholder={PLACEHOLDERS[fieldKey]}
+        onChange={onChange}
+        className={`w-full px-3.5 py-3 text-sm border rounded-xl outline-none transition-all placeholder:text-gray-300
+          ${error
+            ? 'border-red-300 focus:border-red-400 focus:ring-2 focus:ring-red-100 bg-red-50/30'
+            : 'border-gray-200 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 bg-white'}`}
+      />
+      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+    </div>
+  )
+}
+
+// ─── Main page ───────────────────────────────────────────────────
+export default function PublicInvoicePage() {
+  const { token } = useParams()
+
+  const [order,     setOrder]     = useState(null)
+  const [pageState, setPageState] = useState('loading')
+  const [form,      setForm]      = useState({ taxCode:'', companyName:'', address:'', invoiceEmail:'' })
+  const [submitting, setSub]      = useState(false)
+  const [submitOk,  setSubOk]     = useState(false)
+  const [formErr,   setFormErr]   = useState({})
+  const [apiErr,    setApiErr]    = useState('')
+  const timeLeft = useCountdown(order?.createdAt)
+
+  const loadOrder = async () => {
+    try {
+      const r = await getPublicOrder(token)
+      const d = r.data?.data
+      if (!d) { setPageState('error'); return }
+      setOrder(d)
+      if (d.eInvoiceStatus === 'ISSUED') { setPageState('invoiced');  return }
+      if (d.invoiceSubmitted)            { setPageState('submitted'); return }
+      if (!within6h(d.createdAt))        { setPageState('expired');   return }
+      setPageState('ok')
+    } catch { setPageState('error') }
+  }
+
+  useEffect(() => {
+    if (!token) { setPageState('error'); return }
+    loadOrder()
+  }, [token])
+
+  const handleChange = (k, val) => {
+    setForm(p => ({ ...p, [k]: val }))
+    setFormErr(p => ({ ...p, [k]: '' }))
+  }
+
+  const validate = () => {
+    const e = {}
+    if (!form.taxCode.trim())      e.taxCode      = 'Vui lòng nhập mã số thuế'
+    if (!form.companyName.trim())  e.companyName  = 'Vui lòng nhập tên công ty'
+    if (!form.invoiceEmail.trim()) e.invoiceEmail = 'Vui lòng nhập email'
+    else if (!/^\S+@\S+\.\S+$/.test(form.invoiceEmail)) e.invoiceEmail = 'Email không hợp lệ'
+    return e
+  }
+
+  const handleSubmit = async e => {
+    e.preventDefault()
+    const errs = validate()
+    if (Object.keys(errs).length) { setFormErr(errs); return }
+    setSub(true); setApiErr('')
+    try {
+      await submitInvoiceInfo(token, form)
+      setSubOk(true)
+      await loadOrder()
+    } catch (err) {
+      setApiErr(err.response?.data?.message || err.message || 'Có lỗi xảy ra, vui lòng thử lại.')
+    } finally { setSub(false) }
+  }
+
+  // ── Render states ────────────────────────────────────────────
+  if (pageState === 'loading') return <LoadingState />
+  if (pageState === 'error')   return <ErrorState />
+  if (pageState === 'expired') return <ExpiredState order={order} />
+
+  const isSubmitted = pageState === 'submitted' || pageState === 'invoiced'
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50/40">
+      {/* Top bar */}
+      <div className="bg-white border-b border-gray-100 sticky top-0 z-10 backdrop-blur-sm bg-white/90">
+        <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white text-sm">🧾</div>
+            <div>
+              <p className="text-xs font-bold text-gray-900 leading-none">Xuất hóa đơn</p>
+              <p className="text-xs text-gray-400 mt-0.5">#{order.orderCode}</p>
+            </div>
+          </div>
+          {pageState === 'ok' && (
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-full px-3 py-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+              <span className="text-xs font-semibold text-amber-700">Còn {timeLeft}</span>
             </div>
           )}
+          {isSubmitted && <StatusBadge status={order.eInvoiceStatus || 'DRAFT'} />}
         </div>
+      </div>
 
-        {/* Submitted state */}
-        {status === 'submitted' && (
-          <div className="card p-5 border-amber-200 bg-amber-50">
-            <div className="flex items-start gap-3">
-              <span className="text-2xl">✅</span>
-              <div>
-                <p className="font-semibold text-amber-900">
-                  {submitOk ? 'Gửi thông tin thành công!' : 'Thông tin đã được gửi trước đó'}
+      <div className="max-w-md mx-auto px-4 py-6 space-y-4 pb-12">
+
+        {pageState === 'invoiced' && <EInvoiceCard order={order} />}
+
+        {isSubmitted && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5">
+            <div className="flex gap-3">
+              <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-xl shrink-0">
+                {submitOk ? '🎉' : '✅'}
+              </div>
+              <div className="flex-1">
+                <p className="font-bold text-emerald-900 text-sm">
+                  {submitOk ? 'Gửi thông tin thành công!' : 'Đã nhận thông tin xuất hóa đơn'}
                 </p>
-                <div className="mt-3 space-y-1 text-sm text-amber-800">
-                  <p><span className="font-medium">MST:</span> {order.invoiceTaxCode}</p>
-                  <p><span className="font-medium">Công ty:</span> {order.invoiceCompanyName}</p>
-                  <p><span className="font-medium">Email:</span> {order.invoiceEmail}</p>
+                <div className="mt-3 space-y-1">
+                  {[
+                    ['MST',     order.invoiceTaxCode],
+                    ['Công ty', order.invoiceCompanyName],
+                    ['Địa chỉ', order.invoiceAddress],
+                    ['Email',   order.invoiceEmail],
+                  ].filter(([, v]) => v).map(([l, v]) => (
+                    <p key={l} className="text-xs text-emerald-800">
+                      <span className="font-semibold">{l}:</span> {v}
+                    </p>
+                  ))}
+                  {order.invoiceSubmittedAt && (
+                    <p className="text-xs text-emerald-600 mt-2 pt-2 border-t border-emerald-100">
+                      Gửi lúc: {fmtDateTime(order.invoiceSubmittedAt)}
+                    </p>
+                  )}
                 </div>
-                {order.invoiceSubmittedAt && (
-                  <p className="text-xs text-amber-600 mt-2">Gửi lúc: {fmtDateTime(order.invoiceSubmittedAt)}</p>
+                {pageState !== 'invoiced' && (
+                  <p className="text-xs text-emerald-700 mt-3 bg-emerald-100 rounded-lg px-3 py-2">
+                    Hóa đơn sẽ được gửi đến email sau khi kế toán xác nhận.
+                  </p>
                 )}
-                <p className="text-xs text-amber-700 mt-3 bg-amber-100 rounded-lg px-3 py-2">
-                  Không thể thay đổi thông tin sau khi đã gửi.
-                </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Form */}
-        {status === 'ok' && (
-          <div className="card p-5">
-            <h2 className="font-semibold text-gray-800 mb-1 flex items-center gap-2">
-              <span>📝</span> Thông tin xuất hóa đơn
-            </h2>
-            <p className="text-xs text-gray-400 mb-5">
-              Điền thông tin công ty để nhận hóa đơn điện tử qua email. Chỉ được gửi 1 lần.
+        <OrderSummaryCard order={order} />
+
+        {pageState === 'ok' && (
+          <SectionCard icon="📝" title="Thông tin xuất hóa đơn">
+            <p className="text-xs text-gray-400 mb-5 leading-relaxed">
+              Điền đầy đủ thông tin để nhận hóa đơn điện tử qua email.{' '}
+              <strong className="text-amber-600">Chỉ được gửi 1 lần</strong> — kiểm tra kỹ trước khi xác nhận.
             </p>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {[
-                { k:'taxCode',      lbl:'Mã số thuế *',           type:'text',  ph:'0100109106' },
-                { k:'companyName',  lbl:'Tên công ty / Tổ chức *', type:'text',  ph:'Công ty TNHH ABC' },
-                { k:'invoiceEmail', lbl:'Email nhận hóa đơn *',   type:'email', ph:'ketoan@congty.vn' },
-              ].map(({k,lbl,type,ph})=>(
-                <div key={k}>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">{lbl}</label>
-                  <input type={type} value={form[k]} placeholder={ph} required
-                    onChange={e=>setForm(p=>({...p,[k]:e.target.value}))}
-                    className="input text-base" />
-                </div>
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+              {['taxCode', 'companyName', 'address', 'invoiceEmail'].map(k => (
+                <FormField
+                  key={k}
+                  fieldKey={k}
+                  value={form[k]}
+                  error={formErr[k]}
+                  onChange={e => handleChange(k, e.target.value)}
+                />
               ))}
 
-              {err && (
-                <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg px-4 py-3">{err}</div>
+              {apiErr && (
+                <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-xl px-4 py-3 flex gap-2">
+                  <span className="shrink-0">⚠️</span> {apiErr}
+                </div>
               )}
 
               <button type="submit" disabled={submitting}
-                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl transition-colors disabled:opacity-50 text-base">
-                {submitting ? '⏳ Đang gửi...' : '📤 Gửi thông tin xuất hóa đơn'}
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-bold rounded-xl transition-colors disabled:opacity-50 text-sm flex items-center justify-center gap-2 mt-2">
+                {submitting
+                  ? <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Đang gửi...</>
+                  : <><span>📤</span> Xác nhận xuất hóa đơn</>}
               </button>
               <p className="text-xs text-gray-400 text-center">
-                ⚠️ Sau khi gửi, bạn không thể thay đổi thông tin.
+                Sau khi gửi, bạn không thể chỉnh sửa thông tin này.
               </p>
             </form>
-          </div>
+          </SectionCard>
         )}
 
-        <p className="text-center text-xs text-gray-400 pb-4">
-          Cần hỗ trợ? Vui lòng liên hệ nhân viên bán hàng.
+        <p className="text-center text-xs text-gray-400 pt-2">
+          Original Taste · Cần hỗ trợ? Liên hệ nhân viên bán hàng.
         </p>
       </div>
     </div>

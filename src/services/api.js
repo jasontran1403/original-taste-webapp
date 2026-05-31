@@ -43,15 +43,12 @@ export const issueRetailInvoice = orderCode =>
 export const issueBusinessInvoice = (orderCode, buyerInfo) =>
   api.post(`/api/pos/einvoice/business/${orderCode}`, buyerInfo)
 
-/** Xem trước PDF hóa đơn nháp (không phát hành) — trả về base64 */
 export const previewInvoice = (orderCode, buyerInfo = null) =>
   api.post(`/api/pos/einvoice/preview/${orderCode}`, buyerInfo ?? {})
 
-/** Gửi hóa đơn đã phát hành lên cơ quan thuế */
 export const sendInvoiceToCqt = orderCode =>
   api.post(`/api/pos/einvoice/${orderCode}/send-cqt`, {})
 
-/** Tải PDF hóa đơn qua axios (có Authorization header) */
 export const getInvoicePdf = async (invoiceNo) => {
   const response = await api.get(`/api/pos/einvoice/${invoiceNo}/pdf`, {
     responseType: 'blob'
@@ -60,13 +57,18 @@ export const getInvoicePdf = async (invoiceNo) => {
   return URL.createObjectURL(blob)
 }
 
-// Giữ lại để tương thích với các nơi khác import
 export const getPdfUrl = invoiceNo => `${BASE}/api/pos/einvoice/${invoiceNo}/pdf`
 
+// ─── Public invoice endpoints (no auth) ──────────────────────────────────────
+// Dùng invoice_token (UUID ngẫu nhiên) thay vì orderCode để bảo mật public URL
 const pub = axios.create({ baseURL: BASE })
-export const getPublicOrder = orderCode =>
-  pub.get('/api/public/invoice', { params: { orderCode } })
-export const submitInvoiceInfo = (orderCode, data) =>
-  pub.post('/api/public/invoice/submit', data, { params: { orderCode } })
+
+/** Lấy thông tin đơn hàng bằng invoice_token từ QR bill */
+export const getPublicOrder = token =>
+  pub.get(`/api/public/invoice/${token}`)
+
+/** Gửi thông tin xuất hóa đơn (taxCode, companyName, address, invoiceEmail) */
+export const submitInvoiceInfo = (token, data) =>
+  pub.post(`/api/public/invoice/${token}`, data)
 
 export default api
