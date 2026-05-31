@@ -422,7 +422,7 @@ export default function OrderListPage() {
         </div>
 
         {/* Fix: bỏ overflow-hidden khỏi card, chỉ giữ overflow-x-auto ở wrapper trong */}
-        <div className="card min-h-[40svh]">
+        <div className="card">
           {loading ? (
             <div className="py-20 text-center text-gray-400">
               <div className="text-4xl mb-3 animate-pulse">⏳</div>
