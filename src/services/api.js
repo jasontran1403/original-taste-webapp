@@ -312,6 +312,77 @@ export const uploadMedia = (files, onProgress) => {
   })
 }
 
+/** File lớn hơn ngưỡng này thì chia nhỏ để gửi */
+export const CHUNK_THRESHOLD = 8 * 1024 * 1024
+const CHUNK_SIZE = 4 * 1024 * 1024
+
+const unwrapEnvelope = res => {
+  const env = res?.data
+  if (env && typeof env.code === 'number' && !(env.code >= 900 && env.code < 1000)) {
+    throw new Error(env.message || 'Yêu cầu thất bại')
+  }
+  return env?.data ?? env
+}
+
+/**
+ * Tải MỘT file. Tự chọn cách gửi theo kích thước:
+ *   • Nhỏ  → gửi một lần cho nhanh.
+ *   • Lớn  → chia thành nhiều phần 4MB.
+ *
+ * Chia nhỏ giải quyết 2 vấn đề của video nặng: mạng di động rớt giữa chừng thì
+ * chỉ mất một phần thay vì mất trắng, và mỗi request đều nhỏ nên không đụng
+ * giới hạn max-file-size của Spring.
+ *
+ * @param onProgress nhận số 0–100
+ */
+export const uploadOneFile = async (file, onProgress) => {
+  if (file.size <= CHUNK_THRESHOLD) {
+    const form = new FormData()
+    form.append('files', file)
+    const res = await api.post('/api/tools/media/upload', form, {
+      timeout: 15 * 60 * 1000,
+      onUploadProgress: ev => {
+        if (ev.total) onProgress?.(Math.round((ev.loaded / ev.total) * 100))
+      },
+    })
+    const data = unwrapEnvelope(res)
+    if (data?.failed?.length) throw new Error(data.failed[0])
+    return data?.saved?.[0]
+  }
+
+  // ── Gửi theo từng phần ──
+  const init = unwrapEnvelope(await api.post('/api/tools/media/chunk/init'))
+  const uploadId = init.uploadId
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+
+  for (let i = 0; i < totalChunks; i++) {
+    const blob = file.slice(i * CHUNK_SIZE, Math.min((i + 1) * CHUNK_SIZE, file.size))
+    const form = new FormData()
+    form.append('uploadId', uploadId)
+    form.append('index', String(i))
+    form.append('chunk', blob, `part_${i}`)
+
+    await api.post('/api/tools/media/chunk/part', form, {
+      timeout: 10 * 60 * 1000,
+      onUploadProgress: ev => {
+        // Tiến độ tổng = số phần đã xong + phần đang gửi dở
+        const partRatio = ev.total ? ev.loaded / ev.total : 0
+        onProgress?.(Math.round(((i + partRatio) / totalChunks) * 99))
+      },
+    })
+    onProgress?.(Math.round(((i + 1) / totalChunks) * 99))
+  }
+
+  const asset = unwrapEnvelope(await api.post('/api/tools/media/chunk/complete', {
+    uploadId,
+    totalChunks,
+    fileName: file.name,
+    contentType: file.type || '',
+  }))
+  onProgress?.(100)
+  return asset
+}
+
 export const deleteMedia = id => api.delete(`/api/tools/media/${id}`)
 
 /** Gắn watermark rồi lưu thẳng vào thư viện, trả về metadata của file mới */
