@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { login } from '../services/api'
-import { useAuth } from '../hooks/useAuth'
+import { useAuth, rememberedUsername } from '../hooks/useAuth'
 
 export default function LoginPage() {
-  const [form, setForm] = useState({ username: '', password: '' })
+  // Đã tick "Ghi nhớ" lần trước thì điền sẵn tên đăng nhập.
+  // Chỉ nhớ TÊN, không bao giờ lưu mật khẩu.
+  const [form, setForm] = useState(() => ({ username: rememberedUsername(), password: '' }))
+  const [remember, setRemember] = useState(() => !!rememberedUsername())
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
   const { saveAuth } = useAuth()
@@ -22,8 +25,8 @@ export default function LoginPage() {
       if (!token) throw new Error('Không nhận được token')
       if (role !== 'ACCOUNTANT' && role !== 'SUPERADMIN')
         throw new Error('Tài khoản không có quyền truy cập. Yêu cầu role ACCOUNTANT.')
-      saveAuth(token, role)
-      const from = location.state?.from?.pathname || '/orders'
+      saveAuth(token, role, { remember, username: form.username })
+      const from = location.state?.from?.pathname || '/accountant'
       navigate(from, { replace: true })
     } catch (e) {
       setErr(e.response?.data?.message || e.message)
@@ -74,6 +77,21 @@ export default function LoginPage() {
               <div className="bg-red-500/15 border border-red-500/30 rounded-xl px-4 py-3 text-red-300 text-sm">
                 {err}
               </div>
+            )}
+
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={e => setRemember(e.target.checked)}
+                className="w-4 h-4 rounded accent-blue-500"
+              />
+              <span className="text-sm text-blue-100">Ghi nhớ đăng nhập</span>
+            </label>
+            {remember && (
+              <p className="text-xs text-white/30 -mt-2 leading-relaxed">
+                Phiên được giữ lại sau khi đóng trình duyệt. Không nên bật trên máy dùng chung.
+              </p>
             )}
 
             <button

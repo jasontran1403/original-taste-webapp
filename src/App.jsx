@@ -1,11 +1,21 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
+
+import AccountantLayout from './layouts/AccountantLayout'
 import LoginPage from './pages/LoginPage'
 import OrderListPage from './pages/OrderListPage'
+import DashboardPage from './pages/accountant/DashboardPage'
 import InvoiceTestPage from './pages/InvoiceTestPage'
 import PublicInvoicePage from './pages/PublicInvoicePage'
+import PublicSaleInvoicePage from './pages/PublicSaleInvoicePage'
 import NotFoundPage from './pages/NotFoundPage'
+import OrderNotFound from './components/OrderNotFound'
 
+import QrPage from './pages/tools/QrPage'
+import ESignPage from './pages/tools/ESignPage'
+import WatermarkPage from './pages/tools/WatermarkPage'
+
+/** Chỉ ACCOUNTANT / SUPERADMIN — khu vực kế toán */
 function Protected({ children }) {
   const { auth, isAccountant } = useAuth()
   const loc = useLocation()
@@ -18,24 +28,50 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/*
-          Public: form xuất hóa đơn — truy cập qua QR trên bill
-          Route: /invoice/:token
-          token = invoice_token (UUID ngẫu nhiên từ backend), VD:
-            https://www.original-taste.vn/invoice/550e8400-e29b-41d4-a716-446655440000
-        */}
-        <Route path="/invoice/:token" element={<PublicInvoicePage />} />
+        {/* ── Public: form xuất hóa đơn, truy cập qua QR trên bill ── */}
+        {/* /invoice/sale/:token phải khai TRƯỚC /invoice/:token */}
+        <Route path="/invoice/sale/:token" element={<PublicSaleInvoicePage />} />
+        <Route path="/invoice/:token"      element={<PublicInvoicePage />} />
 
-        {/* Auth */}
+        {/* ── Auth ── */}
         <Route path="/login" element={<LoginPage />} />
 
-        {/* Protected — ACCOUNTANT only */}
-        <Route path="/orders"       element={<Protected><OrderListPage /></Protected>} />
-        <Route path="/invoice-test" element={<Protected><InvoiceTestPage /></Protected>} />
+        {/* ── Khu vực Kế toán ── */}
+        <Route path="/accountant" element={<Protected><AccountantLayout /></Protected>}>
+          <Route index               element={<DashboardPage />} />
+          <Route path="orders"       element={<OrderListPage />} />
+          {/* Ký số dùng chung component với /tools/sign, chỉ khác là nhúng
+              vào khung Kế toán (có nav) thay vì ToolShell đứng riêng. */}
+          <Route path="sign"         element={<ESignPage embedded />} />
+          <Route path="invoice-test" element={<InvoiceTestPage />} />
+        </Route>
 
-        {/* Root → 404 (không còn dùng ?orderCode= nữa) */}
-        <Route path="/"  element={<NotFoundPage />} />
-        <Route path="*"  element={<NotFoundPage />} />
+        {/* Đường dẫn cũ — giữ lại để link/bookmark cũ không chết */}
+        <Route path="/orders"       element={<Navigate to="/accountant/orders" replace />} />
+        <Route path="/invoice-test" element={<Navigate to="/accountant/invoice-test" replace />} />
+
+        {/*
+          ── Tiện ích nội bộ ──
+          KHÔNG yêu cầu đăng nhập, cũng không xuất hiện ở menu nào:
+          ai biết đường dẫn thì vào. Backend /api/tools/** cũng đã được
+          whitelist tương ứng trong SecurityConfiguration.
+          /tools/qr        — tạo mã QR
+          /tools/watermark — gắn watermark lên ảnh/video
+        */}
+        <Route path="/tools/qr"        element={<QrPage />} />
+        <Route path="/tools/watermark" element={<WatermarkPage />} />
+
+        {/*
+          Route gốc và mọi route lạ → màn hình "không tìm thấy đơn hàng".
+          Người vào đây phần lớn là khách quét QR bị thiếu/sai mã, nên KHÔNG
+          đá sang trang đăng nhập. Nhân viên kế toán vào thẳng /accountant.
+        */}
+        <Route path="/" element={
+          <OrderNotFound message="Đường dẫn không kèm mã đơn hàng." />
+        } />
+        <Route path="*" element={
+          <OrderNotFound message="Đường dẫn không hợp lệ hoặc mã đơn hàng không tồn tại." />
+        } />
       </Routes>
     </BrowserRouter>
   )

@@ -41,3 +41,23 @@ export const fmtTimeLeft = createdAtMs => {
   if (h > 0) return `${h}h ${m}m`
   return `${m} phút`
 }
+/**
+ * Định dạng tiền theo chuẩn Việt Nam: 123123123 → "123.123.123đ"
+ * Khác fmtCurrency ở chỗ dùng hậu tố "đ" thay vì "₫" và không có khoảng trắng —
+ * đúng cách viết quen thuộc trên chứng từ kế toán trong nước.
+ */
+export const fmtVnd = v => {
+  if (v == null || Number.isNaN(Number(v))) return '—'
+  return new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Number(v)) + 'đ'
+}
+
+/** Rút gọn số lớn cho card thống kê: 1234567890 → "1,23 tỷ" */
+export const fmtVndShort = v => {
+  const n = Number(v)
+  if (v == null || Number.isNaN(n)) return '—'
+  const abs = Math.abs(n)
+  const nf = (x, d = 2) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: d }).format(x)
+  if (abs >= 1e9) return `${nf(n / 1e9)} tỷ`
+  if (abs >= 1e6) return `${nf(n / 1e6, 1)} tr`
+  return fmtVnd(n)
+}

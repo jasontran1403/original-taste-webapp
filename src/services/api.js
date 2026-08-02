@@ -1,4 +1,6 @@
 import axios from 'axios'
+import toast from 'react-hot-toast'
+import { readToken, wipeAuth } from '../hooks/useAuth'
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:9009'
 
@@ -7,32 +9,127 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' }
 })
 
+/**
+ * Backend trả lỗi xác thực bằng HTTP 200 kèm mã trong body:
+ *   901 = chưa xác thực / token không hợp lệ
+ *   902 = sai quyền
+ *   923 = token hết hạn
+ *   924 = token sai chữ ký
+ * Nên phải soi body chứ không thể chỉ dựa vào HTTP status.
+ */
+const AUTH_ERROR_CODES = [901, 902, 923, 924]
+const SESSION_EXPIRED_DELAY = 3000
+
+/** Chặn hiện nhiều toast và chuyển hướng nhiều lần khi nhiều request cùng hỏng */
+let expiredHandled = false
+
+function handleSessionExpired(message) {
+  if (expiredHandled) return
+  expiredHandled = true
+
+  toast.error(message || 'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
+    { duration: SESSION_EXPIRED_DELAY })
+
+  // Đợi toast hiện xong rồi mới dọn dữ liệu và quay về đăng nhập —
+  // chuyển hướng ngay lập tức thì người dùng không kịp đọc lý do.
+  setTimeout(() => {
+    wipeAuth()                       // giữ lại username nếu đã tick "Ghi nhớ"
+    window.location.href = '/login'
+  }, SESSION_EXPIRED_DELAY)
+}
+
+/** Bỏ qua các endpoint công khai và chính API đăng nhập */
+const isExempt = url => {
+  const u = url || ''
+  return u.startsWith('/api/tools/') || u.startsWith('/api/public/') || u.startsWith('/api/auth/')
+}
+
 api.interceptors.request.use(cfg => {
-  const token = sessionStorage.getItem('token')
+  const token = readToken()          // tìm ở cả localStorage lẫn sessionStorage
   if (token) cfg.headers.Authorization = `Bearer ${token}`
+
+  // Instance đặt mặc định Content-Type: application/json. Với upload file
+  // (FormData) phải XÓA header đó đi, để trình duyệt tự sinh
+  // "multipart/form-data; boundary=..." — thiếu boundary thì Spring không
+  // parse được và trả HttpMediaTypeNotSupportedException.
+  if (typeof FormData !== 'undefined' && cfg.data instanceof FormData) {
+    delete cfg.headers['Content-Type']
+    delete cfg.headers['content-type']
+  }
   return cfg
 })
 
-api.interceptors.response.use(r => r, err => {
-  if (err.response?.status === 401) { sessionStorage.clear(); window.location.href = '/login' }
-  return Promise.reject(err)
-})
-
-export const login = (username, password) =>
-  api.post('/api/auth/login', { username, password })
-
-export const getInvoiceOrders = (date, page = 0, size = 50, fromDate, toDate) => {
-  const params = { page, size }
-  if (fromDate && toDate && fromDate !== toDate) {
-    params.fromDate = fromDate
-    params.toDate   = toDate
-  } else if (fromDate) {
-    params.date = fromDate
-  } else if (date) {
-    params.date = date
+api.interceptors.response.use(
+  res => {
+    // Lỗi xác thực về dưới dạng HTTP 200 nên phải kiểm tra ở nhánh THÀNH CÔNG
+    const code = res.data?.code
+    if (AUTH_ERROR_CODES.includes(code) && !isExempt(res.config?.url)) {
+      handleSessionExpired(res.data?.message)
+    }
+    return res
+  },
+  err => {
+    // Phòng trường hợp server/proxy trả 401/403 thật
+    const status = err.response?.status
+    if ((status === 401 || status === 403) && !isExempt(err.config?.url)) {
+      handleSessionExpired(err.response?.data?.message)
+    }
+    return Promise.reject(err)
   }
+)
+
+export const login = (username, password) => {
+  expiredHandled = false          // cho phép cảnh báo lại ở phiên mới
+  return api.post('/api/auth/login', { username, password })
+}
+
+/** Helper: build param ngày cho cả 2 loại endpoint */
+const dateParams = (fromDate, toDate, date) => {
+  if (fromDate && toDate && fromDate !== toDate) return { fromDate, toDate }
+  if (fromDate) return { date: fromDate }
+  if (date)     return { date }
+  return {}
+}
+
+// ─── POS orders ──────────────────────────────────────────────────────────────
+
+export const getInvoiceOrders = (date, page = 0, size = 50, fromDate, toDate, storeId) => {
+  const params = { page, size, ...dateParams(fromDate, toDate, date) }
+  if (storeId) params.storeId = storeId
   return api.get('/api/pos/einvoice/orders', { params })
 }
+
+/** Danh sách cửa hàng để đổ dropdown filter */
+export const getStores = () => api.get('/api/pos/einvoice/stores')
+
+// ─── Đơn bán sỉ/lẻ ───────────────────────────────────────────────────────────
+
+export const getSaleInvoiceOrders = (page = 0, size = 50, fromDate, toDate, type, q) => {
+  const params = { page, size, ...dateParams(fromDate, toDate) }
+  if (type) params.type = type
+  if (q)    params.q    = q
+  return api.get('/api/pos/einvoice/sale/orders', { params })
+}
+
+/** Các loại đơn (type) hiện có — trả về [{ value, label }] */
+export const getSaleOrderTypes = () => api.get('/api/pos/einvoice/sale/types')
+
+/** Kế toán sửa trực tiếp thông tin xuất hóa đơn của đơn sỉ/lẻ */
+export const updateSaleInvoiceInfo = (orderCode, data) =>
+  api.put(`/api/pos/einvoice/sale/${orderCode}/invoice-info`, data)
+
+/** Lấy link + ảnh QR để khách tự nhập thông tin xuất hóa đơn */
+export const getSaleInvoiceQr = orderCode =>
+  api.get(`/api/pos/einvoice/sale/${orderCode}/invoice-qr`)
+
+export const previewSaleInvoice = (orderCode, buyerInfo = null) =>
+  api.post(`/api/pos/einvoice/sale/preview/${orderCode}`, buyerInfo ?? {})
+
+export const issueSaleInvoice = (orderCode, buyerInfo = null) =>
+  api.post(`/api/pos/einvoice/sale/issue/${orderCode}`, buyerInfo ?? {})
+
+export const sendSaleInvoiceToCqt = orderCode =>
+  api.post(`/api/pos/einvoice/sale/${orderCode}/send-cqt`, {})
 
 export const createDraftInvoice = (orderCode, buyerInfo) =>
   api.post(`/api/pos/einvoice/draft/${orderCode}`, buyerInfo ?? {})
@@ -71,4 +168,105 @@ export const getPublicOrder = token =>
 export const submitInvoiceInfo = (token, data) =>
   pub.post(`/api/public/invoice/${token}`, data)
 
+// ─── Public: đơn bán sỉ/lẻ (QR trên hóa đơn seller) ──────────────────────────
+
+/** Lấy đơn sỉ/lẻ bằng invoice_token từ QR */
+export const getPublicSaleOrder = token =>
+  pub.get(`/api/public/invoice/sale/${token}`)
+
+/** Khách gửi/cập nhật thông tin xuất hóa đơn cho đơn sỉ/lẻ */
+export const submitSaleInvoiceInfo = (token, data) =>
+  pub.post(`/api/public/invoice/sale/${token}`, data)
+
 export default api
+// ═══════════════════════════════════════════════════════════════════════════
+// Tiện ích nội bộ: QR / Ký số / Watermark  (/api/tools/**)
+// Các trang này không có trên menu — xem ToolShell.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Tạo mã QR. type = 'url' | 'text' | 'product' */
+export const generateQr = params => {
+  const body = new URLSearchParams()
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') body.append(k, v)
+  })
+  return api.post('/api/tools/qr/generate', body, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  })
+}
+
+/** URL ảnh logo watermark — dùng trực tiếp trong <img>/canvas nên phải kèm token */
+export const fetchWatermarkLogo = () =>
+  api.get('/api/tools/watermark/logo', { responseType: 'blob' })
+
+/**
+ * Gắn watermark. type = 'image' | 'video'
+ * Trả về Blob của file kết quả.
+ */
+export const applyWatermark = (file, settings, type, onProgress) => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('settings', JSON.stringify(settings))
+  form.append('type', type)
+  return api.post('/api/tools/watermark/add', form, {
+    responseType: 'blob',
+    timeout: 15 * 60 * 1000,          // video dài xử lý lâu
+    onUploadProgress: onProgress,
+  })
+}
+
+/**
+ * Ký số PDF. Trả về { blobUrl, filename }, ném Error nếu thất bại.
+ *
+ * Backend trả lỗi nghiệp vụ (chưa cắm token, sai PIN, sai đường dẫn driver...)
+ * bằng HTTP 200 + JSON {success:false,message}. Vì responseType là 'blob' nên
+ * axios không hề coi đó là lỗi — phải tự soi content-type, nếu không màn hình
+ * sẽ báo "Ký số thành công" với một file JSON đổi đuôi .pdf.
+ */
+export const signPdf = async ({ file, zones, pin }) => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('zones', JSON.stringify({ zones }))
+
+  const res = await api.post('/api/tools/sign', form, {
+    responseType: 'blob',
+    timeout: 5 * 60 * 1000,
+    headers: { 'X-Token-Pin': pin },   // PIN chỉ nằm trong header, không log
+  })
+
+  await assertPdfBlob(res.data)
+
+  const cd = res.headers['content-disposition'] || ''
+  const match = cd.match(/filename[^;=\n]*=\s*(?:["']?)([^"'\n;]+)/i)
+  return {
+    blobUrl: URL.createObjectURL(res.data),
+    filename: match?.[1] || `signed_${Date.now()}.pdf`,
+  }
+}
+
+/** Ném Error kèm message của backend nếu blob thực chất là JSON lỗi */
+async function assertPdfBlob(blob) {
+  const type = blob?.type || ''
+
+  if (type.includes('json')) {
+    let message = 'Ký số thất bại'
+    try {
+      const body = JSON.parse(await blob.text())
+      message = body.message || body.error || message
+    } catch { /* không parse được thì giữ message mặc định */ }
+    throw new Error(message)
+  }
+
+  // Phòng trường hợp server không set content-type: nhận diện qua chữ ký file.
+  // Mọi file PDF hợp lệ đều bắt đầu bằng "%PDF".
+  if (!type.includes('pdf')) {
+    const head = await blob.slice(0, 5).text()
+    if (!head.startsWith('%PDF')) {
+      throw new Error('Máy chủ không trả về file PDF hợp lệ')
+    }
+  }
+}
+
+/** Kiểm tra USB token đã sẵn sàng chưa */
+export const checkTokenStatus = pin =>
+  api.post('/api/tools/sign/token-status', {}, { headers: { 'X-Token-Pin': pin } })

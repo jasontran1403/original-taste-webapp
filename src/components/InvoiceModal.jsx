@@ -1,7 +1,30 @@
 import { useState, useEffect, useRef } from 'react'
-import { previewInvoice, issueRetailInvoice, issueBusinessInvoice, sendInvoiceToCqt, getInvoicePdf } from '../services/api'
+import {
+  previewInvoice, issueRetailInvoice, issueBusinessInvoice, sendInvoiceToCqt, getInvoicePdf,
+  previewSaleInvoice, issueSaleInvoice, sendSaleInvoiceToCqt
+} from '../services/api'
 
-export default function InvoiceModal({ order, onClose, onIssued }) {
+/**
+ * Bộ endpoint theo nguồn đơn.
+ *   pos  — đơn POS  : tách riêng retail / business
+ *   sale — đơn sỉ/lẻ: 1 endpoint duy nhất, BE tự nhận diện có MST hay không
+ */
+const ENDPOINTS = {
+  pos: {
+    preview:  (code, buyer) => previewInvoice(code, buyer),
+    issue:    (code, buyer) => buyer ? issueBusinessInvoice(code, buyer) : issueRetailInvoice(code),
+    sendCqt:  code => sendInvoiceToCqt(code),
+  },
+  sale: {
+    preview:  (code, buyer) => previewSaleInvoice(code, buyer),
+    issue:    (code, buyer) => issueSaleInvoice(code, buyer),
+    sendCqt:  code => sendSaleInvoiceToCqt(code),
+  },
+}
+
+export default function InvoiceModal({ order, onClose, onIssued, source = 'pos' }) {
+  const api = ENDPOINTS[source] || ENDPOINTS.pos
+
   const initStep = order?._cqtMode ? 'issued' : 'preview'
   const [step, setStep] = useState(initStep)
 
@@ -16,6 +39,7 @@ export default function InvoiceModal({ order, onClose, onIssued }) {
       : null
   )
   const [error, setError]     = useState(null)
+  const [previewError, setPreviewError] = useState(null)
   const [loading, setLoading] = useState(false)
   const pdfBlobUrl = useRef(null)
 
@@ -24,25 +48,38 @@ export default function InvoiceModal({ order, onClose, onIssued }) {
     return () => { if (pdfBlobUrl.current) URL.revokeObjectURL(pdfBlobUrl.current) }
   }, [])
 
+  /**
+   * BE luôn trả HTTP 200, lỗi nghiệp vụ nằm trong envelope ApiResponse (code != 900).
+   * Bóc envelope ở một chỗ để mọi bước xử lý lỗi giống nhau.
+   */
+  const unwrap = res => {
+    const env = res?.data
+    if (env && typeof env.code === 'number' && !(env.code >= 900 && env.code < 1000)) {
+      throw new Error(env.message || 'Yêu cầu thất bại')
+    }
+    return env?.data ?? env
+  }
+
   const getBuyerInfo = () => hasInvoiceInfo ? bizInfo : null
 
   const loadPreview = async () => {
-    setLoading(true); setError(null)
+    setLoading(true); setError(null); setPreviewError(null)
     try {
-      const r = await previewInvoice(order.orderCode, getBuyerInfo())
-      const base64 = r.data?.data || r.data
+      // Backend trả lỗi nghiệp vụ bằng HTTP 200 + envelope → phải bóc ra,
+      // nếu không sẽ hiện "không khả dụng" chung chung và giấu mất nguyên nhân
+      const base64 = unwrap(await api.preview(order.orderCode, getBuyerInfo()))
       setPdfBase64(typeof base64 === 'string' ? base64 : null)
-    } catch (e) { console.warn('Preview failed:', e.message) }
-    finally { setLoading(false) }
+    } catch (e) {
+      setPreviewError(e.response?.data?.message || e.message || 'Không tạo được bản xem trước')
+      setPdfBase64(null)
+    } finally { setLoading(false) }
   }
 
   const handleIssue = async () => {
     setStep('issuing'); setError(null)
     try {
-      const res = hasInvoiceInfo
-        ? await issueBusinessInvoice(order.orderCode, bizInfo)
-        : await issueRetailInvoice(order.orderCode)
-      const result = res.data?.data ?? res.data
+      const res = await api.issue(order.orderCode, getBuyerInfo())
+      const result = unwrap(res)
       if (result?.status === 'ERROR') throw new Error(result.errorMessage)
       setIssuedResult(result)
       setStep('issued')
@@ -56,7 +93,7 @@ export default function InvoiceModal({ order, onClose, onIssued }) {
   const handleSendCqt = async () => {
     setStep('cqt_sending'); setError(null)
     try {
-      await sendInvoiceToCqt(order.orderCode)
+      unwrap(await api.sendCqt(order.orderCode))
       setStep('done')
     } catch (e) {
       setError(e.response?.data?.message || e.message)
@@ -112,7 +149,9 @@ export default function InvoiceModal({ order, onClose, onIssued }) {
           <div>
             <h2 className="font-bold text-white text-sm sm:text-base">Phát hành hóa đơn điện tử</h2>
             <p className="text-blue-200 text-xs mt-0.5">
-              Đơn #{order.orderCode}{order.storeName ? ` · ${order.storeName}` : ''}
+              Đơn #{order.orderCode}
+              {order.storeName ? ` · ${order.storeName}` : (order.type ? ` · ${order.type}` : '')}
+              {source === 'sale' ? ' · Bán sỉ/lẻ' : ''}
             </p>
           </div>
           <button onClick={onClose}
@@ -157,6 +196,16 @@ export default function InvoiceModal({ order, onClose, onIssued }) {
                       className="flex-1 w-full border-0"
                       title="Invoice Preview"
                     />
+                  ) : previewError ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+                      <div className="text-4xl mb-3">⚠️</div>
+                      <p className="font-semibold text-gray-800 mb-2">Không tạo được bản xem trước</p>
+                      <p className="text-sm text-red-600 max-w-lg leading-relaxed">{previewError}</p>
+                      <button onClick={loadPreview}
+                        className="mt-4 px-4 py-2 text-xs font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors">
+                        ↻ Thử lại
+                      </button>
+                    </div>
                   ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-400 text-sm">
                       <div className="text-4xl mb-3">📋</div>
