@@ -12,8 +12,8 @@ import NotFoundPage from './pages/NotFoundPage'
 import OrderNotFound from './components/OrderNotFound'
 
 import QrPage from './pages/tools/QrPage'
-import ESignPage from './pages/tools/ESignPage'
-import WatermarkPage from './pages/tools/WatermarkPage'
+import ESignPage from './pages/accountant/ESignPage'
+import MediaPage from './pages/tools/MediaPage'
 
 /** Chỉ ACCOUNTANT / SUPERADMIN — khu vực kế toán */
 function Protected({ children }) {
@@ -40,9 +40,7 @@ export default function App() {
         <Route path="/accountant" element={<Protected><AccountantLayout /></Protected>}>
           <Route index               element={<DashboardPage />} />
           <Route path="orders"       element={<OrderListPage />} />
-          {/* Ký số dùng chung component với /tools/sign, chỉ khác là nhúng
-              vào khung Kế toán (có nav) thay vì ToolShell đứng riêng. */}
-          <Route path="sign"         element={<ESignPage embedded />} />
+          <Route path="sign"         element={<ESignPage />} />
           <Route path="invoice-test" element={<InvoiceTestPage />} />
         </Route>
 
@@ -56,10 +54,15 @@ export default function App() {
           ai biết đường dẫn thì vào. Backend /api/tools/** cũng đã được
           whitelist tương ứng trong SecurityConfiguration.
           /tools/qr        — tạo mã QR
-          /tools/watermark — gắn watermark lên ảnh/video
+          /tools/media     — thư viện tài nguyên + gắn watermark
+                             (/tools/watermark giữ lại cho link cũ)
+
+          Ký số PDF đã chuyển hẳn vào khu vực Kế toán (/accountant/sign),
+          không còn đường dẫn công khai /tools/sign nữa.
         */}
         <Route path="/tools/qr"        element={<QrPage />} />
-        <Route path="/tools/watermark" element={<WatermarkPage />} />
+        <Route path="/tools/media"     element={<MediaPage />} />
+        <Route path="/tools/watermark" element={<MediaPage />} />
 
         {/*
           Route gốc và mọi route lạ → màn hình "không tìm thấy đơn hàng".

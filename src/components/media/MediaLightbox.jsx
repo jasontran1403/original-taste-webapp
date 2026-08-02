@@ -1,0 +1,165 @@
+import { useEffect, useRef, useState } from 'react'
+import { mediaUrl, downloadFile } from '../../services/api'
+
+const SWIPE_THRESHOLD = 50   // px — dưới mức này coi như chạm nhầm, không chuyển ảnh
+
+/**
+ * Xem tài nguyên toàn màn hình.
+ *
+ * Ảnh: hiển thị vừa khung. Video: player có sẵn điều khiển của trình duyệt
+ * (tua được nhờ backend phục vụ file qua static resource handler hỗ trợ Range).
+ *
+ * Vuốt trái/phải để chuyển, hoặc dùng nút ‹ ›, hoặc phím mũi tên trên desktop.
+ * Vuốt trên VIDEO bị tắt để không tranh với thao tác tua của player.
+ */
+export default function MediaLightbox({ items, index, onClose, onIndexChange, onDelete }) {
+  const item = items[index]
+  const touchStart = useRef(null)
+  const [downloading, setDownloading] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const isVideo = item?.mediaType === 'VIDEO'
+  const canPrev = index > 0
+  const canNext = index < items.length - 1
+
+  const go = delta => {
+    const next = index + delta
+    if (next >= 0 && next < items.length) {
+      setConfirmDelete(false)
+      onIndexChange(next)
+    }
+  }
+
+  // Phím tắt trên desktop
+  useEffect(() => {
+    const onKey = e => {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowLeft') go(-1)
+      if (e.key === 'ArrowRight') go(1)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [index, items.length])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Khoá cuộn nền khi đang mở
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [])
+
+  const onTouchStart = e => {
+    if (isVideo) return
+    touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
+
+  const onTouchEnd = e => {
+    if (isVideo || !touchStart.current) return
+    const dx = e.changedTouches[0].clientX - touchStart.current.x
+    const dy = e.changedTouches[0].clientY - touchStart.current.y
+    touchStart.current = null
+
+    // Chỉ tính là vuốt ngang khi lệch ngang rõ hơn lệch dọc
+    if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) < Math.abs(dy)) return
+    go(dx < 0 ? 1 : -1)
+  }
+
+  const handleDownload = async () => {
+    setDownloading(true)
+    try {
+      await downloadFile(item.url, item.originalName)
+    } catch {
+      alert('Không tải được file, vui lòng thử lại.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  if (!item) return null
+
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col"
+      onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+
+      {/* Thanh trên */}
+      <div className="shrink-0 flex items-center gap-2 px-3 py-2 text-white/80"
+        style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}>
+        <button onClick={onClose} aria-label="Đóng"
+          className="w-10 h-10 shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center text-xl">
+          ✕
+        </button>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm truncate">{item.originalName}</p>
+          <p className="text-xs text-white/40">{index + 1} / {items.length}</p>
+        </div>
+
+        <button onClick={handleDownload} disabled={downloading} aria-label="Tải về"
+          className="w-10 h-10 shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center disabled:opacity-40">
+          {downloading ? '…' : '⬇'}
+        </button>
+        {onDelete && (
+          <button onClick={() => setConfirmDelete(c => !c)} aria-label="Xóa"
+            className="w-10 h-10 shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center">
+            🗑
+          </button>
+        )}
+      </div>
+
+      {confirmDelete && (
+        <div className="mx-3 mb-2 bg-red-600/90 text-white text-sm rounded-xl px-4 py-3 flex items-center gap-3">
+          <span className="flex-1">Xóa vĩnh viễn file này?</span>
+          <button onClick={() => setConfirmDelete(false)}
+            className="px-3 py-1.5 rounded-lg bg-white/20 text-xs font-semibold">Huỷ</button>
+          <button onClick={() => { setConfirmDelete(false); onDelete(item) }}
+            className="px-3 py-1.5 rounded-lg bg-white text-red-600 text-xs font-bold">Xóa</button>
+        </div>
+      )}
+
+      {/* Nội dung */}
+      <div className="flex-1 min-h-0 relative flex items-center justify-center px-2">
+        {isVideo ? (
+          <video
+            key={item.id}
+            src={mediaUrl(item.url)}
+            controls
+            playsInline
+            autoPlay
+            className="max-w-full max-h-full rounded-lg"
+          />
+        ) : (
+          <img
+            key={item.id}
+            src={mediaUrl(item.url)}
+            alt={item.originalName}
+            className="max-w-full max-h-full object-contain select-none"
+            draggable={false}
+          />
+        )}
+
+        {/* Nút chuyển — ẩn trên màn hình hẹp vì đã có vuốt */}
+        {canPrev && (
+          <button onClick={() => go(-1)} aria-label="Trước"
+            className="hidden sm:flex absolute left-3 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white items-center justify-center text-2xl">
+            ‹
+          </button>
+        )}
+        {canNext && (
+          <button onClick={() => go(1)} aria-label="Sau"
+            className="hidden sm:flex absolute right-3 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white items-center justify-center text-2xl">
+            ›
+          </button>
+        )}
+      </div>
+
+      {/* Thanh dưới — chuyển nhanh trên điện thoại */}
+      <div className="shrink-0 flex items-center justify-center gap-6 py-3 text-white/70 sm:hidden"
+        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+        <button onClick={() => go(-1)} disabled={!canPrev}
+          className="px-5 py-2 rounded-full bg-white/10 disabled:opacity-30 text-lg">‹</button>
+        <span className="text-xs">{isVideo ? 'Video' : 'Vuốt để chuyển'}</span>
+        <button onClick={() => go(1)} disabled={!canNext}
+          className="px-5 py-2 rounded-full bg-white/10 disabled:opacity-30 text-lg">›</button>
+      </div>
+    </div>
+  )
+}

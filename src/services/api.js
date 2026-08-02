@@ -270,3 +270,66 @@ async function assertPdfBlob(blob) {
 /** Kiểm tra USB token đã sẵn sàng chưa */
 export const checkTokenStatus = pin =>
   api.post('/api/tools/sign/token-status', {}, { headers: { 'X-Token-Pin': pin } })
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Thư viện tài nguyên (ảnh + video dùng chung)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Backend trả đường dẫn tương đối (/media/xxx.jpg) vì nó không biết mình đang
+ * chạy sau domain nào. Ghép với baseURL ở client cho đúng cả dev lẫn production.
+ */
+export const mediaUrl = path => {
+  if (!path) return ''
+  return /^https?:\/\//.test(path) ? path : BASE + path
+}
+
+export const listMedia = (page = 0, size = 40) =>
+  api.get('/api/tools/media', { params: { page, size } })
+
+export const uploadMedia = (files, onProgress) => {
+  const form = new FormData()
+  Array.from(files).forEach(f => form.append('files', f))
+  return api.post('/api/tools/media/upload', form, {
+    timeout: 15 * 60 * 1000,
+    onUploadProgress: onProgress,
+  })
+}
+
+export const deleteMedia = id => api.delete(`/api/tools/media/${id}`)
+
+/** Gắn watermark rồi lưu thẳng vào thư viện, trả về metadata của file mới */
+export const watermarkAndSave = (file, settings, onProgress) => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('settings', JSON.stringify(settings))
+  return api.post('/api/tools/watermark/save', form, {
+    timeout: 15 * 60 * 1000,
+    onUploadProgress: onProgress,
+  })
+}
+
+/**
+ * Tải file về máy.
+ *
+ * Không dùng <a download> trực tiếp với URL của server: thuộc tính download bị
+ * bỏ qua khi khác origin (dev chạy 5173 còn API ở 9009), trình duyệt sẽ MỞ file
+ * thay vì tải. Nên phải fetch về blob rồi mới tạo link tải.
+ *
+ * Trên iOS Safari, ảnh/video tải kiểu này vào mục Tệp; muốn lưu vào Ảnh thì
+ * người dùng mở file rồi chọn "Lưu vào Ảnh" — đó là giới hạn của iOS, trang web
+ * không có quyền ghi thẳng vào thư viện ảnh.
+ */
+export const downloadFile = async (url, filename) => {
+  const res = await fetch(mediaUrl(url))
+  if (!res.ok) throw new Error('Không tải được file')
+  const blob = await res.blob()
+  const objectUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objectUrl
+  a.download = filename || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 10000)
+}
