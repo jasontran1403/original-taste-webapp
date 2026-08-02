@@ -48,6 +48,17 @@ function computePageSize() {
   return Math.min(100, Math.max(12, cols * rows))
 }
 
+/**
+ * Thanh công cụ ghim ngay dưới thanh tab, tiêu đề nhóm ngày ghim dưới thanh
+ * công cụ. Ba lớp sticky chồng nhau nên các mốc này phải khớp chiều cao thật,
+ * lệch một chút là chữ bị che.
+ */
+// Khai báo ở đây (không phải ở MediaPage) để tránh import vòng:
+// MediaPage đã import MediaGallery rồi.
+export const TAB_BAR_HEIGHT = 44
+const TOOLBAR_TOP     = TAB_BAR_HEIGHT          // thanh công cụ nằm dưới thanh tab
+const GROUP_LABEL_TOP = TAB_BAR_HEIGHT + 52     // + chiều cao thanh công cụ
+
 /** Date → 'YYYY-MM-DD' theo giờ máy (toISOString quy về UTC nên lệch ngày) */
 const toDateInput = d => {
   const pad = n => String(n).padStart(2, '0')
@@ -62,6 +73,7 @@ export default function MediaGallery({ refreshKey, onNotify }) {
   const [loading, setLoading]  = useState(false)
   const [showUpload, setUpload] = useState(false)
   const [lightbox, setLightbox] = useState(null)
+  const [showFilters, setShowFilters] = useState(false)
 
   // Bộ lọc
   const [onlyFav, setOnlyFav] = useState(false)
@@ -266,46 +278,76 @@ export default function MediaGallery({ refreshKey, onNotify }) {
         }
       `}</style>
 
-      {/* Thanh hành động */}
-      <div className="flex flex-wrap items-center gap-2 mb-3">
-        <button onClick={() => setUpload(true)} className="btn-primary">⬆ Tải lên</button>
+      {/*
+        Thanh công cụ ghim ngay dưới thanh tab (44px). Trên điện thoại 3 nút
+        thu về icon để một dòng chứa đủ; màn hình rộng mới hiện thêm chữ.
+      */}
+      <div className="sticky z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-2
+        bg-gray-50/95 backdrop-blur border-b border-gray-200"
+        style={{ top: TOOLBAR_TOP }}>
 
-        <button onClick={() => setOnlyFav(f => !f)}
-          className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors
-            ${onlyFav ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-white border-gray-200 text-gray-500'}`}>
-          {onlyFav ? '❤️ Yêu thích' : '🤍 Yêu thích'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setUpload(true)} title="Tải lên"
+            className="h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-semibold
+              flex items-center gap-1.5 active:scale-95 transition">
+            <span className="text-base leading-none">＋</span>
+            <span className="hidden sm:inline">Tải lên</span>
+          </button>
 
-        <button onClick={toggleDateFilter}
-          className={`px-3 py-2 rounded-lg text-sm font-semibold border transition-colors
-            ${dateOn ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-500'}`}>
-          🗓 Thời gian
-        </button>
+          <button onClick={() => setOnlyFav(f => !f)} title="Yêu thích"
+            className={`h-9 px-3 rounded-lg text-sm font-semibold border flex items-center gap-1.5
+              active:scale-95 transition-colors
+              ${onlyFav ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-white border-gray-200 text-gray-500'}`}>
+            <span className="text-base leading-none">{onlyFav ? '❤️' : '🤍'}</span>
+            <span className="hidden sm:inline">Yêu thích</span>
+          </button>
 
-        {dateOn && (
-          <DateRangePicker fromDate={from} toDate={to}
-            onChange={(f, t) => { setFrom(f); setTo(t) }} />
+          <button onClick={() => setShowFilters(v => !v)} title="Tìm kiếm"
+            className={`h-9 px-3 rounded-lg text-sm font-semibold border flex items-center gap-1.5
+              active:scale-95 transition-colors
+              ${showFilters || dateOn || query ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-500'}`}>
+            <span className="text-base leading-none">🔍</span>
+            <span className="hidden sm:inline">Tìm kiếm</span>
+          </button>
+
+          <span className="text-xs sm:text-sm text-gray-400 ml-auto shrink-0">{totalCount} mục</span>
+        </div>
+
+        {/* Bảng tìm kiếm — mở bằng nút 🔍, gộp cả tìm theo tên và theo ngày */}
+        {showFilters && (
+          <div className="mt-2 flex flex-col sm:flex-row sm:items-center gap-2">
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Tìm theo tên file..."
+              className="flex-1 min-w-0 px-3.5 py-2 bg-white border border-gray-200 rounded-lg text-sm
+                outline-none focus:border-blue-400 transition-colors placeholder:text-gray-300"
+            />
+
+            <div className="flex items-center gap-2">
+              <button onClick={toggleDateFilter}
+                className={`h-9 px-3 rounded-lg text-sm font-semibold border shrink-0 transition-colors
+                  ${dateOn ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-500'}`}>
+                🗓 Theo ngày
+              </button>
+
+              {dateOn && (
+                <DateRangePicker fromDate={from} toDate={to}
+                  onChange={(f, t) => { setFrom(f); setTo(t) }} />
+              )}
+            </div>
+          </div>
         )}
 
-        <span className="text-sm text-gray-400 ml-auto">{totalCount} mục</span>
+        {hasFilter && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+            <span>Đang lọc</span>
+            <button onClick={clearFilters} className="text-blue-600 font-semibold hover:underline">
+              Bỏ tất cả bộ lọc
+            </button>
+          </div>
+        )}
       </div>
-
-      <input
-        value={search}
-        onChange={e => setSearch(e.target.value)}
-        placeholder="🔍 Tìm theo tên file..."
-        className="w-full mb-3 px-3.5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm outline-none
-          focus:border-blue-400 transition-colors placeholder:text-gray-300"
-      />
-
-      {hasFilter && (
-        <div className="flex items-center gap-2 mb-3 text-xs text-gray-500">
-          <span>Đang lọc</span>
-          <button onClick={clearFilters} className="text-blue-600 font-semibold hover:underline">
-            Bỏ tất cả bộ lọc
-          </button>
-        </div>
-      )}
 
       {/* Báo còn file cũ hơn ở phía trên */}
       {hasMore && (
@@ -323,8 +365,9 @@ export default function MediaGallery({ refreshKey, onNotify }) {
         groups.map(group => (
           <section key={group.key} className="mb-5 media-group">
             {/* Tiêu đề dính — cuộn tới đâu thấy mốc thời gian tới đó */}
-            <h3 className="sticky top-14 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-1.5
-              bg-gray-50/95 backdrop-blur text-xs font-bold text-gray-500 uppercase tracking-wider">
+            <h3 className="sticky z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-1.5
+              bg-gray-50/95 backdrop-blur text-xs font-bold text-gray-500 uppercase tracking-wider"
+              style={{ top: GROUP_LABEL_TOP }}>
               {group.label}
               <span className="ml-2 font-normal text-gray-300 normal-case">{group.items.length}</span>
             </h3>
