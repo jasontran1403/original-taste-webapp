@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { mediaUrl, downloadFile } from '../../services/api'
+import { fmtFullTime } from './groupByDate'
 
 const SWIPE_THRESHOLD = 50   // px — dưới mức này coi như chạm nhầm, không chuyển ảnh
 
@@ -11,12 +12,20 @@ const SWIPE_THRESHOLD = 50   // px — dưới mức này coi như chạm nhầm
  *
  * Vuốt trái/phải để chuyển, hoặc dùng nút ‹ ›, hoặc phím mũi tên trên desktop.
  * Vuốt trên VIDEO bị tắt để không tranh với thao tác tua của player.
+ *
+ * Thanh trên có: thả tim, đổi tên, tải về, xóa.
+ * Đuôi file được backend giữ nguyên khi đổi tên — mất đuôi thì tải về máy
+ * không mở được bằng ứng dụng nào.
  */
-export default function MediaLightbox({ items, index, onClose, onIndexChange, onDelete }) {
+export default function MediaLightbox({
+  items, index, onClose, onIndexChange, onDelete, onRename, onFavorite,
+}) {
   const item = items[index]
   const touchStart = useRef(null)
   const [downloading, setDownloading] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [draftName, setDraftName] = useState('')
 
   const isVideo = item?.mediaType === 'VIDEO'
   const canPrev = index > 0
@@ -26,6 +35,7 @@ export default function MediaLightbox({ items, index, onClose, onIndexChange, on
     const next = index + delta
     if (next >= 0 && next < items.length) {
       setConfirmDelete(false)
+      setRenaming(false)
       onIndexChange(next)
     }
   }
@@ -90,20 +100,63 @@ export default function MediaLightbox({ items, index, onClose, onIndexChange, on
         </button>
         <div className="min-w-0 flex-1">
           <p className="text-sm truncate">{item.originalName}</p>
-          <p className="text-xs text-white/40">{index + 1} / {items.length}</p>
+          <p className="text-xs text-white/40">
+            {index + 1} / {items.length} · {fmtFullTime(item.createdAt)}
+          </p>
         </div>
+
+        {onFavorite && (
+          <button onClick={() => onFavorite(item)} aria-label="Yêu thích"
+            className="w-10 h-10 shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center">
+            {item.favorite ? '❤️' : '🤍'}
+          </button>
+        )}
+        {onRename && (
+          <button
+            onClick={() => { setDraftName(item.originalName || ''); setRenaming(r => !r); setConfirmDelete(false) }}
+            aria-label="Đổi tên"
+            className="w-10 h-10 shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center">
+            ✏️
+          </button>
+        )}
 
         <button onClick={handleDownload} disabled={downloading} aria-label="Tải về"
           className="w-10 h-10 shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center disabled:opacity-40">
           {downloading ? '…' : '⬇'}
         </button>
         {onDelete && (
-          <button onClick={() => setConfirmDelete(c => !c)} aria-label="Xóa"
+          <button onClick={() => { setConfirmDelete(c => !c); setRenaming(false) }} aria-label="Xóa"
             className="w-10 h-10 shrink-0 rounded-full hover:bg-white/10 flex items-center justify-center">
             🗑
           </button>
         )}
       </div>
+
+      {renaming && (
+        <div className="mx-3 mb-2 bg-white rounded-xl p-3 flex items-center gap-2">
+          <input
+            value={draftName}
+            autoFocus
+            onChange={e => setDraftName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && draftName.trim()) {
+                onRename(item, draftName.trim()); setRenaming(false)
+              }
+              if (e.key === 'Escape') setRenaming(false)
+            }}
+            className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-800 outline-none focus:border-blue-400"
+            placeholder="Tên hiển thị"
+          />
+          <button onClick={() => setRenaming(false)}
+            className="px-3 py-2 rounded-lg bg-gray-100 text-gray-600 text-xs font-semibold shrink-0">Huỷ</button>
+          <button
+            disabled={!draftName.trim()}
+            onClick={() => { onRename(item, draftName.trim()); setRenaming(false) }}
+            className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold disabled:opacity-40 shrink-0">
+            Lưu
+          </button>
+        </div>
+      )}
 
       {confirmDelete && (
         <div className="mx-3 mb-2 bg-red-600/90 text-white text-sm rounded-xl px-4 py-3 flex items-center gap-3">

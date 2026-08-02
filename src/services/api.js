@@ -284,8 +284,24 @@ export const mediaUrl = path => {
   return /^https?:\/\//.test(path) ? path : BASE + path
 }
 
-export const listMedia = (page = 0, size = 40) =>
-  api.get('/api/tools/media', { params: { page, size } })
+/**
+ * @param filters { favorite, from, to, q } — bỏ trống thì không lọc.
+ *   from/to là epoch millis (thời điểm tải lên).
+ */
+export const listMedia = (page = 0, size = 40, filters = {}) => {
+  const params = { page, size }
+  if (filters.favorite) params.favorite = true
+  if (filters.from) params.from = filters.from
+  if (filters.to)   params.to   = filters.to
+  if (filters.q)    params.q    = filters.q
+  return api.get('/api/tools/media', { params })
+}
+
+export const renameMedia = (id, name) =>
+  api.patch(`/api/tools/media/${id}/name`, { name })
+
+export const favoriteMedia = (id, favorite) =>
+  api.patch(`/api/tools/media/${id}/favorite`, { favorite })
 
 export const uploadMedia = (files, onProgress) => {
   const form = new FormData()
