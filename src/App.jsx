@@ -61,7 +61,6 @@ export default function App() {
           không còn đường dẫn công khai /tools/sign nữa.
         */}
         <Route path="/tools/qr"        element={<QrPage />} />
-        <Route path="/tools/media"     element={<MediaPage />} />
         <Route path="/tools/watermark" element={<MediaPage />} />
 
         {/*
