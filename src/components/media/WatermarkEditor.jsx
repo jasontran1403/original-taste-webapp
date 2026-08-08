@@ -284,7 +284,7 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
       )}
 
       {!file ? (
-        <div className="max-w-md mx-auto">
+        <div className="max-w-2xl mx-auto pt-4 sm:pt-8">
           <button
             onClick={() => inputRef.current?.click()}
             className="w-full card border-2 border-dashed border-gray-200 py-14 text-center hover:border-blue-400 transition-colors"
@@ -300,7 +300,7 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
       ) : (
         <>
           {/* Thanh file + nút lưu — dính trên cùng để trên điện thoại luôn bấm được */}
-          <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-2.5
+          <div className="sticky top-0 z-10 -mx-2 sm:-mx-4 lg:-mx-6 px-2 sm:px-4 lg:px-6 py-2.5
             bg-gray-50/95 backdrop-blur border-b border-gray-200 flex items-center gap-2 mb-4">
             <span className="badge bg-white border border-gray-200 text-gray-500 shrink-0">
               {isVideo ? '🎥' : '📷'} {(file.size / 1048576).toFixed(1)} MB
@@ -312,16 +312,37 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
             </button>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 lg:gap-5">
+          {/*
+            Bố cục FULL WIDTH.
+
+            Bản cũ chia 4 cột đều nhau (lg:grid-cols-4), nên trên màn 27" khung
+            xem chỉ chiếm 3/4 rồi lại bị canvas giới hạn max-h-[60vh] bóp nhỏ
+            thêm — kết quả là một ô ảnh bé tí nằm lọt thỏm giữa màn hình.
+
+            Giờ dùng cột phụ CỐ ĐỊNH 300–340px, phần còn lại dành hết cho khung
+            xem. Màn càng rộng thì ảnh càng lớn thay vì bảng điều khiển phình ra
+            — bảng đó chỉ có mấy thanh trượt, rộng thêm cũng vô ích.
+          */}
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px]
+            xl:grid-cols-[minmax(0,1fr)_340px] gap-4 lg:gap-5 items-start">
+
             {/* Preview — lên trước trên điện thoại */}
-            <section className="lg:col-span-3 order-1">
+            <section className="order-1 min-w-0">
               <div className="card p-2 sm:p-4 bg-gray-100/70">
                 <div className="flex justify-center">
                   <canvas
                     ref={canvasRef}
                     onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
                     onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}
-                    className="max-w-full max-h-[50vh] sm:max-h-[60vh] w-auto h-auto rounded-lg shadow touch-none bg-white"
+                    /*
+                      Chiều cao tính theo phần còn lại của màn hình thay vì
+                      %vh cứng: 44px thanh tab + ~56px thanh tệp + ~120px thanh
+                      điều khiển video và chú thích. Nhờ vậy ảnh dọc trên màn
+                      hình cao vẫn dùng hết chỗ, mà không đẩy nút bấm xuống dưới
+                      mép màn hình.
+                    */
+                    className="max-w-full w-auto h-auto rounded-lg shadow touch-none bg-white
+                      max-h-[46svh] sm:max-h-[calc(100svh-260px)] lg:max-h-[calc(100svh-230px)]"
                   />
                 </div>
 
@@ -363,7 +384,12 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
             </section>
 
             {/* Điều chỉnh */}
-            <aside className="lg:col-span-1 order-2">
+            {/*
+              Trên desktop bảng điều chỉnh được ghim lại: ảnh dọc rất cao thì
+              cuộn xuống xem chi tiết vẫn kéo được thanh trượt mà không phải
+              cuộn ngược lên.
+            */}
+            <aside className="order-2 lg:sticky lg:top-[60px]">
               <div className="card p-4 space-y-5">
                 <Slider label="Kích thước" value={`${Math.round(settings.scale * 100)}%`}
                   min={0.05} max={0.8} step={0.01} v={settings.scale}

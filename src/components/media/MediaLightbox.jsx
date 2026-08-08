@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { mediaUrl, downloadFile } from '../../services/api'
 import { fmtFullTime } from './groupByDate'
+import { SkeletonMedia } from '../common/Skeleton'
 
 const SWIPE_THRESHOLD = 50   // px — dưới mức này coi như chạm nhầm, không chuyển ảnh
 
@@ -26,6 +27,27 @@ export default function MediaLightbox({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [draftName, setDraftName] = useState('')
+
+  /**
+   * Ảnh/video gốc nặng hơn thumbnail rất nhiều, mở lightbox là một khoảng đen
+   * kéo dài một hai giây. Khung xương lấp chỗ đó lại.
+   *
+   * `ready` phải reset mỗi lần đổi sang mục khác, không thì vuốt sang ảnh sau
+   * sẽ hiện ảnh cũ cho tới khi ảnh mới tải xong.
+   */
+  const [ready, setReady] = useState(false)
+  const mediaRef = useRef(null)
+
+  useEffect(() => {
+    setReady(false)
+    // Ảnh đã nằm trong cache thì onLoad không bắn nữa — soi `complete` ở khung
+    // hình kế tiếp để khung xương không kẹt lại vĩnh viễn
+    const id = requestAnimationFrame(() => {
+      const el = mediaRef.current
+      if (el?.tagName === 'IMG' && el.complete && el.naturalWidth) setReady(true)
+    })
+    return () => cancelAnimationFrame(id)
+  }, [item?.id])
 
   const isVideo = item?.mediaType === 'VIDEO'
   const canPrev = index > 0
@@ -170,21 +192,37 @@ export default function MediaLightbox({
 
       {/* Nội dung */}
       <div className="flex-1 min-h-0 relative flex items-center justify-center px-2">
+        {!ready && (
+          <div className="absolute inset-0 pointer-events-none">
+            <SkeletonMedia isVideo={isVideo} />
+          </div>
+        )}
+
         {isVideo ? (
           <video
             key={item.id}
+            ref={mediaRef}
             src={mediaUrl(item.url)}
             controls
             playsInline
             autoPlay
-            className="max-w-full max-h-full rounded-lg"
+            // loadeddata chứ không phải canplay: canplay có thể bắn trước khi
+            // có khung hình nào, khung xương tắt đi để lộ ô đen
+            onLoadedData={() => setReady(true)}
+            onError={() => setReady(true)}
+            className={`max-w-full max-h-full rounded-lg transition-opacity duration-300
+              ${ready ? 'opacity-100' : 'opacity-0'}`}
           />
         ) : (
           <img
             key={item.id}
+            ref={mediaRef}
             src={mediaUrl(item.url)}
             alt={item.originalName}
-            className="max-w-full max-h-full object-contain select-none"
+            onLoad={() => setReady(true)}
+            onError={() => setReady(true)}
+            className={`max-w-full max-h-full object-contain select-none
+              transition-opacity duration-300 ${ready ? 'opacity-100' : 'opacity-0'}`}
             draggable={false}
           />
         )}

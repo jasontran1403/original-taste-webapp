@@ -6,6 +6,8 @@ import MediaLightbox from './MediaLightbox'
 import UploadModal from './UploadModal'
 import DateRangePicker from '../DateRangePicker'
 import { groupByDate } from './groupByDate'
+import { SkeletonTiles } from '../common/Skeleton'
+import { withMinDelay, MIN_LOADING_MS } from '../../lib/timing'
 
 /**
  * Thư viện ảnh/video, bố cục theo đúng ứng dụng Ảnh của iPhone:
@@ -70,7 +72,8 @@ export default function MediaGallery({ refreshKey, onNotify }) {
   const [page, setPage]        = useState(0)
   const [totalPages, setTotal] = useState(0)
   const [totalCount, setCount] = useState(0)
-  const [loading, setLoading]  = useState(false)
+  const [loading, setLoading]  = useState(true)    // tải lần đầu / đổi bộ lọc
+  const [prepending, setPrepend] = useState(false) // đang chèn thêm file cũ ở ĐẦU
   const [showUpload, setUpload] = useState(false)
   const [lightbox, setLightbox] = useState(null)
   const [showFilters, setShowFilters] = useState(false)
@@ -87,6 +90,9 @@ export default function MediaGallery({ refreshKey, onNotify }) {
   const pageSizeRef = useRef(computePageSize())
   const loadingRef  = useRef(false)          // chặn gọi trùng khi cuộn nhanh
   const pendingScroll = useRef(null)         // 'bottom' | { prevHeight }
+  // Số phần tử vừa chèn vào ĐẦU mảng — chỉ những phần tử này chạy animation,
+  // không thì cả lưới nhấp nháy lại sau mỗi lần tải thêm
+  const freshCount = useRef(0)
 
   // Gõ tới đâu gọi API tới đó thì vừa giật vừa tốn request → chờ 400ms
   useEffect(() => {
@@ -118,7 +124,7 @@ export default function MediaGallery({ refreshKey, onNotify }) {
   const load = useCallback(async (targetPage, prepend) => {
     if (loadingRef.current) return
     loadingRef.current = true
-    setLoading(true)
+    prepend ? setPrepend(true) : setLoading(true)
 
     // Ghi lại chiều cao trang TRƯỚC khi chèn, để giữ nguyên vị trí đang xem
     pendingScroll.current = prepend
@@ -126,7 +132,12 @@ export default function MediaGallery({ refreshKey, onNotify }) {
       : 'bottom'
 
     try {
-      const res = await listMedia(targetPage, pageSizeRef.current, buildFilters())
+      const request = listMedia(targetPage, pageSizeRef.current, buildFilters())
+
+      // Khi tải thêm, ép dòng "Đang tải thêm" hiện đủ 600ms. Mạng nhanh thì nó
+      // chớp lên rồi tắt trong 40ms, lưới tự dài ra mà không rõ vì sao. Chờ
+      // SONG SONG với request nên mạng chậm không tốn thêm giây nào.
+      const res = prepend ? await withMinDelay(request, MIN_LOADING_MS) : await request
       const env = res.data
       if (env && typeof env.code === 'number' && !(env.code >= 900 && env.code < 1000)) {
         throw new Error(env.message)
@@ -136,6 +147,7 @@ export default function MediaGallery({ refreshKey, onNotify }) {
       // API trả mới → cũ; đảo lại thành cũ → mới cho đúng thứ tự hiển thị
       const batch = [...(d.content || [])].reverse()
 
+      freshCount.current = prepend ? batch.length : 0
       setItems(prev => prepend ? [...batch, ...prev] : batch)
       setTotal(d.totalPages || 0)
       setCount(d.totalElements || 0)
@@ -145,6 +157,7 @@ export default function MediaGallery({ refreshKey, onNotify }) {
       onNotify?.(e.message || 'Không tải được thư viện', false)
     } finally {
       setLoading(false)
+      setPrepend(false)
       loadingRef.current = false
     }
   }, [onlyFav, query, dateOn, from, to, onNotify])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -253,6 +266,10 @@ export default function MediaGallery({ refreshKey, onNotify }) {
   const hasMore = page < totalPages - 1
   const groups = groupByDate(items)   // items đã ở thứ tự cũ → mới
 
+  // Lô vừa chèn nằm ở ĐẦU mảng. Dựng sẵn Set id để trong vòng lặp render chỉ
+  // phải tra một lần, thay vì indexOf trên mảng vài trăm phần tử cho mỗi ô.
+  const freshIds = new Set(items.slice(0, freshCount.current).map(i => i.id))
+
   // ── Render ──────────────────────────────────────────────────────
 
   return (
@@ -271,10 +288,21 @@ export default function MediaGallery({ refreshKey, onNotify }) {
           from { opacity: 0; transform: translateY(-4px); }
           to   { opacity: 1; transform: none; }
         }
+        /*
+          File cũ được nối vào ĐẦU danh sách nên animation phải đi từ TRÊN
+          xuống — ngược với trang Tệp (nối vào đáy, trượt từ dưới lên). Hai
+          hướng khác nhau vì thứ tự sắp xếp của hai trang ngược nhau; dùng
+          chung một hướng sẽ thấy sai chiều với nhịp cuộn.
+        */
+        @keyframes mediaInTop {
+          from { opacity: 0; transform: translateY(-14px) scale(.96); }
+          to   { opacity: 1; transform: none; }
+        }
         .media-tile  { animation: mediaIn .26s cubic-bezier(.2,.8,.3,1) both; }
+        .media-tile-new { animation: mediaInTop .34s cubic-bezier(.2,.8,.3,1) both; }
         .media-group { animation: groupIn .2s ease both; }
         @media (prefers-reduced-motion: reduce) {
-          .media-tile, .media-group { animation: none; }
+          .media-tile, .media-tile-new, .media-group { animation: none; }
         }
       `}</style>
 
@@ -349,14 +377,29 @@ export default function MediaGallery({ refreshKey, onNotify }) {
         )}
       </div>
 
-      {/* Báo còn file cũ hơn ở phía trên */}
-      {hasMore && (
-        <div className="py-3 text-center text-xs text-gray-400">
-          {loading ? 'Đang tải thêm...' : '↑ Cuộn lên để xem file cũ hơn'}
+      {/*
+        Báo còn file cũ hơn — đặt ở TRÊN CÙNG vì trang này sắp cũ → mới và
+        cuộn LÊN mới tải thêm. Trang Tệp thì ngược lại, chỉ báo ở đáy.
+      */}
+      {hasMore && !loading && (
+        <div className="py-3 text-center">
+          {prepending ? (
+            <span className="inline-flex items-center gap-2 text-xs text-gray-400">
+              <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-200
+                border-t-blue-500 animate-spin" />
+              Đang tải thêm...
+            </span>
+          ) : (
+            <span className="text-xs text-gray-300">↑ Cuộn lên để xem file cũ hơn</span>
+          )}
         </div>
       )}
 
-      {items.length === 0 && !loading ? (
+      {loading ? (
+        <div className="pt-3">
+          <SkeletonTiles count={24} />
+        </div>
+      ) : items.length === 0 ? (
         <div className="py-20 text-center text-gray-300">
           <div className="text-5xl mb-3">{hasFilter ? '🔍' : '🖼️'}</div>
           <p className="text-sm">{hasFilter ? 'Không có mục nào khớp bộ lọc' : 'Chưa có tài nguyên nào'}</p>
@@ -375,7 +418,8 @@ export default function MediaGallery({ refreshKey, onNotify }) {
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-1.5 sm:gap-2 mt-2">
               {group.items.map((it, idx) => (
                 <div key={it.id}
-                  className="media-tile relative aspect-square rounded-lg overflow-hidden bg-gray-100 group"
+                  className={`relative aspect-square rounded-lg overflow-hidden bg-gray-100 group
+                    ${freshIds.has(it.id) ? 'media-tile-new' : 'media-tile'}`}
                   style={{ animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
 
                   <button onClick={() => setLightbox(items.findIndex(x => x.id === it.id))}
