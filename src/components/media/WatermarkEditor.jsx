@@ -188,11 +188,19 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
     const pos = toPct(e)
     if (!isOnWatermark(pos)) return
     e.preventDefault()
+    // Giữ con trỏ (chuột/ngón tay) trên canvas: vẫn nhận được pointermove/
+    // pointerup ngay cả khi ngón tay trượt ra ngoài canvas — nhờ vậy luôn
+    // dọn được dragRef khi thả tay, không bị "kẹt" trạng thái kéo.
+    try { e.currentTarget.setPointerCapture?.(e.pointerId) } catch { /* trình duyệt cũ */ }
     dragRef.current = { offX: settings.x - pos.x, offY: settings.y - pos.y }
   }
 
   const onMove = e => {
-    if (!dragRef.current) {
+    // Đọc ra biến cục bộ NGAY: setSettings chạy callback bất đồng bộ khi render,
+    // nếu tới lúc đó tay đã thả (onUp gán dragRef.current = null) thì đọc
+    // dragRef.current.offX sẽ ném TypeError → app trắng màn hình.
+    const drag = dragRef.current
+    if (!drag) {
       if (canvasRef.current) {
         canvasRef.current.style.cursor = isOnWatermark(toPct(e)) ? 'grab' : 'default'
       }
@@ -202,13 +210,16 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
     const pos = toPct(e)
     setSettings(s => ({
       ...s,
-      x: clamp(pos.x + dragRef.current.offX, 0, 100),
-      y: clamp(pos.y + dragRef.current.offY, 0, 100),
+      x: clamp(pos.x + drag.offX, 0, 100),
+      y: clamp(pos.y + drag.offY, 0, 100),
     }))
   }
 
-  const onUp = () => {
+  const onUp = e => {
     dragRef.current = null
+    if (e?.pointerId != null) {
+      try { canvasRef.current?.releasePointerCapture?.(e.pointerId) } catch { /* đã tự nhả */ }
+    }
     if (canvasRef.current) canvasRef.current.style.cursor = 'default'
   }
 
@@ -332,8 +343,8 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
                 <div className="flex justify-center">
                   <canvas
                     ref={canvasRef}
-                    onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}
-                    onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}
+                    onPointerDown={onDown} onPointerMove={onMove}
+                    onPointerUp={onUp} onPointerCancel={onUp}
                     /*
                       Chiều cao tính theo phần còn lại của màn hình thay vì
                       %vh cứng: 44px thanh tab + ~56px thanh tệp + ~120px thanh
