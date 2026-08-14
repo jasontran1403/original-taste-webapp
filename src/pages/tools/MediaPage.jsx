@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useToolsAuth } from '../../hooks/useToolsAuth'
 import MediaGallery, { TAB_BAR_HEIGHT } from '../../components/media/MediaGallery'
@@ -39,6 +39,24 @@ export default function MediaPage() {
   const { auth, logout } = useToolsAuth()
   const navigate = useNavigate()
 
+  /**
+   * Thanh tab tự ẩn khi đang cuộn, hiện lại khi ngừng — giống thanh công cụ trên
+   * app ảnh điện thoại. Gần đỉnh trang thì luôn hiện.
+   */
+  const [navHidden, setNavHidden] = useState(false)
+  const idleTimer = useRef(null)
+  useEffect(() => {
+    const onScroll = () => {
+      const y = window.scrollY || window.pageYOffset || 0
+      clearTimeout(idleTimer.current)
+      if (y < 8) { setNavHidden(false); return }   // sát đỉnh → luôn hiện
+      setNavHidden(true)
+      idleTimer.current = setTimeout(() => setNavHidden(false), 220)
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => { window.removeEventListener('scroll', onScroll); clearTimeout(idleTimer.current) }
+  }, [])
+
   const handleLogout = () => {
     logout()
     navigate('/tools/login', { replace: true })
@@ -57,6 +75,9 @@ export default function MediaPage() {
 
   const fullBleed = FULL_BLEED.has(tab)
 
+  // Đổi tab thì luôn cho thanh tab hiện lại
+  useEffect(() => { setNavHidden(false) }, [tab])
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Keyframes cho khung xương — khai báo một lần ở cấp trang */}
@@ -70,8 +91,12 @@ export default function MediaPage() {
         </div>
       )}
 
-      {/* Thanh tab ghim đỉnh — cuộn ngang trên máy hẹp thay vì xuống dòng */}
-      <div className="sticky top-0 z-30 bg-white border-b border-gray-200">
+      {/* Thanh tab ghim đỉnh — tự trượt lên khi cuộn, hiện lại khi ngừng cuộn */}
+      <div className="sticky top-0 z-30 bg-white border-b border-gray-200 will-change-transform"
+        style={{
+          transform: navHidden ? `translateY(-${TAB_BAR_HEIGHT}px)` : 'translateY(0)',
+          transition: 'transform .3s ease',
+        }}>
         <div className="w-full px-4 sm:px-6 lg:px-8 flex items-center gap-1 overflow-x-auto
           [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           style={{ height: TAB_BAR_HEIGHT }}>
@@ -109,7 +134,11 @@ export default function MediaPage() {
         : 'w-full px-4 sm:px-6 lg:px-8 pb-8'}>
 
         {tab === 'library' && (
-          <MediaGallery refreshKey={refreshKey} onNotify={notify} />
+          <MediaGallery
+            refreshKey={refreshKey}
+            onNotify={notify}
+            topOffset={navHidden ? 0 : TAB_BAR_HEIGHT}
+          />
         )}
 
         {tab === 'files' && (

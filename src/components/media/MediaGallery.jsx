@@ -8,7 +8,7 @@ import DateRangePicker from '../DateRangePicker'
 import { groupByDate } from './groupByDate'
 import { SkeletonTiles } from '../common/Skeleton'
 import { withMinDelay, MIN_LOADING_MS } from '../../lib/timing'
-import { usePinchZoom, zoomBounds } from '../../hooks/usePinchZoom'
+import { usePinchZoom, ZOOM_LEVELS, snapToLevel, nearestLevelIndex } from '../../hooks/usePinchZoom'
 
 /**
  * Thư viện ảnh/video, bố cục theo đúng ứng dụng Ảnh của iPhone:
@@ -58,9 +58,11 @@ function computePageSize() {
  */
 // Khai báo ở đây (không phải ở MediaPage) để tránh import vòng:
 // MediaPage đã import MediaGallery rồi.
+// Thanh tab có thể ẩn khi cuộn → các mốc sticky bên dưới tính theo prop
+// `topOffset` truyền vào (0 khi thanh tab ẩn, TAB_BAR_HEIGHT khi hiện).
 export const TAB_BAR_HEIGHT = 44
-const TOOLBAR_TOP     = TAB_BAR_HEIGHT          // thanh công cụ nằm dưới thanh tab
-const GROUP_LABEL_TOP = TAB_BAR_HEIGHT + 52     // + chiều cao thanh công cụ
+const TOOLBAR_GAP     = 0    // thanh công cụ nằm ngay dưới thanh tab
+const GROUP_LABEL_GAP = 52   // tiêu đề nhóm nằm dưới thanh công cụ
 
 /** Date → 'YYYY-MM-DD' theo giờ máy (toISOString quy về UTC nên lệch ngày) */
 const toDateInput = d => {
@@ -71,14 +73,14 @@ const toDateInput = d => {
 /** Nhớ mức zoom của người dùng giữa các lần mở trang */
 const ZOOM_KEY = 'media:zoomCols'
 
-/** Số cột khởi tạo: lấy mức đã lưu (kẹp trong giới hạn) hoặc mặc định theo màn hình */
+/**
+ * Số cột khởi tạo: lấy mức đã lưu và ép về đúng một MỨC cho phép
+ * (1/3/5/15/32); chưa có thì mặc định 5 ảnh/dòng.
+ */
 function initialColumns() {
-  const w = typeof window === 'undefined' ? 1024 : window.innerWidth
-  const b = zoomBounds(w)
-  const clamp = c => Math.max(b.min, Math.min(b.max, c))
   const saved = parseInt(localStorage.getItem(ZOOM_KEY) || '', 10)
-  if (!Number.isNaN(saved)) return clamp(saved)
-  return clamp(columnsFor(w))
+  if (!Number.isNaN(saved)) return snapToLevel(saved)
+  return 5
 }
 
 /**
@@ -100,7 +102,7 @@ function tileWidthFor(cols) {
  */
 const SHARP_TILE_PX = 190
 
-export default function MediaGallery({ refreshKey, onNotify }) {
+export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR_HEIGHT }) {
   const [items, setItems]      = useState([])   // thứ tự HIỂN THỊ: cũ → mới
   const [page, setPage]        = useState(0)
   const [totalPages, setTotal] = useState(0)
@@ -119,18 +121,22 @@ export default function MediaGallery({ refreshKey, onNotify }) {
   const [from, setFrom]       = useState('')
   const [to, setTo]           = useState('')
 
-  // ── Zoom lưới ảnh (kiểu iPhone) ────────────────────────────────
+  // Vị trí sticky của thanh công cụ + tiêu đề nhóm, dời theo trạng thái thanh tab
+  const toolbarTop    = topOffset + TOOLBAR_GAP
+  const groupLabelTop = topOffset + GROUP_LABEL_GAP
+
+  // ── Zoom lưới ảnh (kiểu iPhone) — nhảy theo mức 1/3/5/15/32 ─────
   const [columns, setColumns] = useState(initialColumns)
   const [tilePx, setTilePx]   = useState(() => tileWidthFor(initialColumns()))
   const columnsRef = useRef(columns)
-  const boundsRef  = useRef(zoomBounds(typeof window === 'undefined' ? 1024 : window.innerWidth))
+  const levelsRef  = useRef(ZOOM_LEVELS)
   const zoomRef    = useRef(null)            // phần tử bao lưới để bắt cử chỉ
 
-  const clampCols = c => Math.max(boundsRef.current.min, Math.min(boundsRef.current.max, c))
-  const canZoomIn  = columns > boundsRef.current.min   // ít cột hơn = ô to hơn
-  const canZoomOut = columns < boundsRef.current.max
-  const zoomIn  = () => setColumns(c => clampCols(c - 1))
-  const zoomOut = () => setColumns(c => clampCols(c + 1))
+  const levelIdx   = nearestLevelIndex(columns)
+  const canZoomIn  = levelIdx > 0                         // ít cột hơn = ô to hơn
+  const canZoomOut = levelIdx < ZOOM_LEVELS.length - 1
+  const zoomIn  = () => setColumns(ZOOM_LEVELS[Math.max(0, nearestLevelIndex(columns) - 1)])
+  const zoomOut = () => setColumns(ZOOM_LEVELS[Math.min(ZOOM_LEVELS.length - 1, nearestLevelIndex(columns) + 1)])
 
   // Ô đủ to thì thumbnail bị mờ → dùng ảnh gốc cho nét (chỉ với ẢNH; video giữ
   // thumbnail vì it.url là file video, không phải ảnh)
@@ -143,7 +149,7 @@ export default function MediaGallery({ refreshKey, onNotify }) {
     try { localStorage.setItem(ZOOM_KEY, String(columns)) } catch { /* bỏ qua */ }
   }, [columns])
 
-  usePinchZoom(zoomRef, { columnsRef, boundsRef, setColumns })
+  usePinchZoom(zoomRef, { columnsRef, levelsRef, setColumns })
 
   const searchRef   = useRef(null)
   const pageSizeRef = useRef(computePageSize())
@@ -160,17 +166,11 @@ export default function MediaGallery({ refreshKey, onNotify }) {
     return () => clearTimeout(searchRef.current)
   }, [search])
 
-  // Xoay ngang/dọc hoặc đổi cỡ cửa sổ → tính lại cỡ trang + kẹp lại mức zoom
+  // Xoay ngang/dọc hoặc đổi cỡ cửa sổ → tính lại cỡ trang + bề rộng ô
   useEffect(() => {
     const onResize = () => {
       pageSizeRef.current = computePageSize()
-      boundsRef.current = zoomBounds(window.innerWidth)
-      const { min, max } = boundsRef.current
-      setColumns(c => {
-        const next = Math.max(min, Math.min(max, c))
-        setTilePx(tileWidthFor(next))
-        return next
-      })
+      setTilePx(tileWidthFor(columnsRef.current))
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -380,7 +380,7 @@ export default function MediaGallery({ refreshKey, onNotify }) {
       */}
       <div className="sticky z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-2
         bg-gray-50/95 backdrop-blur border-b border-gray-200"
-        style={{ top: TOOLBAR_TOP }}>
+        style={{ top: toolbarTop, transition: 'top .3s ease' }}>
 
         <div className="flex items-center gap-2">
           <button onClick={() => setUpload(true)} title="Tải lên"
@@ -504,7 +504,7 @@ export default function MediaGallery({ refreshKey, onNotify }) {
             {/* Tiêu đề dính — cuộn tới đâu thấy mốc thời gian tới đó */}
             <h3 className="sticky z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-1.5
               bg-gray-50/95 backdrop-blur text-xs font-bold text-gray-500 uppercase tracking-wider"
-              style={{ top: GROUP_LABEL_TOP }}>
+              style={{ top: groupLabelTop, transition: 'top .3s ease' }}>
               {group.label}
               <span className="ml-2 font-normal text-gray-300 normal-case">{group.items.length}</span>
             </h3>
