@@ -5,7 +5,6 @@ import {
 import MediaLightbox from './MediaLightbox'
 import { groupByDate } from './groupByDate'
 import { SkeletonTiles } from '../common/Skeleton'
-import { withMinDelay, MIN_LOADING_MS } from '../../lib/timing'
 
 /**
  * Thư viện ảnh/video — cũ nhất ở trên, mới nhất ở đáy; mở trang cuộn sẵn xuống
@@ -14,21 +13,21 @@ import { withMinDelay, MIN_LOADING_MS } from '../../lib/timing'
  *  • Luôn 5 ảnh/dòng, mỗi ảnh chừa ~5px xung quanh.
  *  • Mặc định tải 30 file gần nhất (6 dòng × 5).
  *  • Nếu nội dung chưa đầy màn hình → tự tải thêm cho đủ.
- *  • Bộ lọc năm/tháng/ngày (từ MediaPage) chỉ giới hạn mốc dưới `fromMs`; nếu
- *    khoảng đó chưa đủ 30 file thì tự bỏ giới hạn để lấy thêm file gần đó
- *    (expandable), gom nhóm theo đúng năm/tháng/ngày đã chọn.
+ *  • Ảnh đã thả tim → viền ĐỎ (không còn icon tim trên thumbnail). Thả/bỏ tim
+ *    làm trong màn hình xem ảnh.
+ *  • Cuộn lên tải thêm: KHÔNG hiện gì trong lúc chờ; khi có ảnh mới thì cuộn
+ *    MƯỢT lên để lộ ảnh.
+ *  • Lọc năm/tháng/ngày chỉ giới hạn mốc dưới `fromMs`; nếu khoảng đó chưa đủ
+ *    30 file thì tự bỏ giới hạn để lấy thêm file gần đó (expandable).
  */
 
 export const TAB_BAR_HEIGHT = 44
 
-/** Luôn 5 ảnh trên một dòng */
 const COLUMNS = 5
-/** Tải 30 file mỗi lần (6 dòng × 5) */
 const PAGE_SIZE = 30
-/** Ngưỡng "đủ một trang" để quyết định có tải thêm không */
 const FILL_TARGET = 30
+const SCROLL_TRIGGER = 400   // cách đỉnh dưới ngưỡng này thì tải thêm
 
-/** Bề rộng thật (CSS px) của một ô — để biết khi nào cần dùng ảnh gốc cho nét */
 function tileWidthFor(cols) {
   if (typeof window === 'undefined') return 120
   const w = window.innerWidth
@@ -38,7 +37,6 @@ function tileWidthFor(cols) {
 }
 const SHARP_TILE_PX = 190
 
-/** Date → 'YYYY-MM-DD' theo giờ máy */
 export const toDateInput = d => {
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -49,18 +47,17 @@ export default function MediaGallery({
   onlyFav = false, search = '',
   fromMs = null, toMs = null,
   granularity = 'auto',
-  expandable = false,     // true khi đang lọc năm/tháng/ngày → cho phép nới ra nếu < 30
-  filterNonce = 0,        // đổi mỗi lần bấm nút lọc → kích hoạt cuộn mượt xuống đáy
+  expandable = false,
+  filterNonce = 0,
 }) {
   const [items, setItems]      = useState([])
   const [page, setPage]        = useState(0)
   const [totalPages, setTotal] = useState(0)
   const [totalCount, setCount] = useState(0)
   const [loading, setLoading]  = useState(true)
-  const [prepending, setPrepend] = useState(false)
   const [lightbox, setLightbox] = useState(null)
   const [query, setQuery]      = useState('')
-  const [expanded, setExpanded] = useState(false)   // đã bỏ giới hạn mốc dưới chưa
+  const [expanded, setExpanded] = useState(false)
 
   const searchRef   = useRef(null)
   const loadingRef  = useRef(false)
@@ -71,21 +68,17 @@ export default function MediaGallery({
   const prevNonce = useRef(filterNonce)
   lightboxOpenRef.current = lightbox !== null
 
-  const gapped = true                       // luôn có khoảng cách ~5px
-  const sharp  = tileWidthFor(COLUMNS) >= SHARP_TILE_PX
+  const sharp = tileWidthFor(COLUMNS) >= SHARP_TILE_PX
 
-  // Khi đang lọc mà khoảng chọn ít hơn 30 file thì bỏ giới hạn để lấy thêm
   const effFrom = expanded ? null : fromMs
   const effTo   = expanded ? null : toMs
 
-  // Debounce ô tìm theo tên
   useEffect(() => {
     clearTimeout(searchRef.current)
     searchRef.current = setTimeout(() => setQuery(search), 400)
     return () => clearTimeout(searchRef.current)
   }, [search])
 
-  // Bấm nút lọc (đổi filterNonce) → lần tải kế tiếp cuộn MƯỢT xuống đáy
   useEffect(() => {
     if (prevNonce.current !== filterNonce) {
       smoothBottom.current = true
@@ -93,7 +86,6 @@ export default function MediaGallery({
     }
   }, [filterNonce])
 
-  // Đổi mốc lọc → bỏ trạng thái "đã nới"
   useEffect(() => { setExpanded(false) }, [fromMs, toMs, expandable, filterNonce])
 
   const buildFilters = () => ({
@@ -103,25 +95,29 @@ export default function MediaGallery({
     to:   effTo ?? null,
   })
 
-  const load = useCallback(async (targetPage, prepend) => {
+  /**
+   * @param prepend true = chèn file cũ vào đầu
+   * @param reveal  true = sau khi chèn thì cuộn MƯỢT lên để lộ ảnh mới
+   *                (chỉ dùng khi người dùng chủ động cuộn lên; auto-fill thì false)
+   */
+  const load = useCallback(async (targetPage, prepend, reveal = false) => {
     if (loadingRef.current) return
     loadingRef.current = true
-    prepend ? setPrepend(true) : setLoading(true)
+    if (!prepend) setLoading(true)
 
     pendingScroll.current = prepend
-      ? { prevHeight: document.documentElement.scrollHeight }
+      ? { prevHeight: document.documentElement.scrollHeight, reveal }
       : (smoothBottom.current ? 'bottom-smooth' : 'bottom')
     if (!prepend) smoothBottom.current = false
 
     try {
-      const request = listMedia(targetPage, PAGE_SIZE, buildFilters())
-      const res = prepend ? await withMinDelay(request, MIN_LOADING_MS) : await request
+      const res = await listMedia(targetPage, PAGE_SIZE, buildFilters())
       const env = res.data
       if (env && typeof env.code === 'number' && !(env.code >= 900 && env.code < 1000)) {
         throw new Error(env.message)
       }
       const d = env?.data ?? env
-      const batch = [...(d.content || [])].reverse()   // API mới→cũ → đảo thành cũ→mới
+      const batch = [...(d.content || [])].reverse()
       const total = d.totalElements || 0
 
       freshCount.current = prepend ? batch.length : 0
@@ -130,7 +126,6 @@ export default function MediaGallery({
       setCount(total)
       setPage(d.currentPage || 0)
 
-      // Đang lọc mà khoảng chọn chưa đủ 30 → bỏ giới hạn, lấy thêm file gần đó
       if (!prepend && expandable && !expanded && fromMs != null && total < FILL_TARGET) {
         setExpanded(true)
       }
@@ -139,51 +134,59 @@ export default function MediaGallery({
       onNotify?.(e.message || 'Không tải được thư viện', false)
     } finally {
       setLoading(false)
-      setPrepend(false)
       loadingRef.current = false
     }
   }, [onlyFav, query, effFrom, effTo, expandable, expanded, fromMs, onNotify])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Đổi bộ lọc → tải lại từ đầu
   useEffect(() => {
     load(0, false)
   }, [refreshKey, onlyFav, query, effFrom, effTo])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sau khi DOM đổi: lần đầu/đổi lọc → xuống đáy; chèn ở đầu → bù scrollTop
+  // Sau khi DOM đổi:
+  //  • lần đầu/đổi lọc → xuống đáy
+  //  • chèn ở đầu       → GIỮ nguyên vị trí (không nhảy); nếu reveal thì cuộn
+  //    MƯỢT lên một đoạn để người dùng thấy ảnh vừa thêm.
   useLayoutEffect(() => {
     const action = pendingScroll.current
     if (!action) return
     pendingScroll.current = null
+
     if (action === 'bottom' || action === 'bottom-smooth') {
       window.scrollTo({
         top: document.documentElement.scrollHeight,
         behavior: action === 'bottom-smooth' ? 'smooth' : 'auto',
       })
-    } else {
-      const delta = document.documentElement.scrollHeight - action.prevHeight
-      if (delta > 0) window.scrollTo({ top: window.scrollY + delta, behavior: 'auto' })
+      return
+    }
+
+    // prepend
+    const delta = document.documentElement.scrollHeight - action.prevHeight
+    if (delta <= 0) return
+    const base = window.scrollY + delta
+    window.scrollTo(0, base)                 // giữ vị trí, tuyệt đối không nhảy
+    if (action.reveal) {
+      const up = Math.min(delta, window.innerHeight * 0.85)
+      const target = Math.max(SCROLL_TRIGGER + 60, base - up)
+      requestAnimationFrame(() => window.scrollTo({ top: target, behavior: 'smooth' }))
     }
   }, [items])
 
-  // Nếu nội dung CHƯA đầy màn hình → tự tải thêm cho đủ (giải quyết cả việc
-  // desktop không có gì để cuộn nên không kích hoạt tải thêm)
+  // Nội dung chưa đầy màn hình → tự tải thêm cho đủ (không reveal, giữ đáy)
   useEffect(() => {
-    if (loadingRef.current || loading || prepending) return
+    if (loadingRef.current || loading) return
     if (lightboxOpenRef.current) return
     if (page >= totalPages - 1) return
     if (document.documentElement.scrollHeight <= window.innerHeight + 120) {
-      load(page + 1, true)
+      load(page + 1, true, false)
     }
-  }, [items, loading, prepending, page, totalPages, load])
+  }, [items, loading, page, totalPages, load])
 
-  // Cuộn gần lên đỉnh → tải thêm file cũ hơn.
-  // Khi lightbox mở thì KHÔNG tải (nền bị khoá position:fixed làm scrollY về 0,
-  // bắn sự kiện scroll — nếu không chặn sẽ chèn ảnh cũ vào đầu, lệch chỉ số).
+  // Cuộn gần lên đỉnh → tải thêm file cũ hơn (reveal = cuộn mượt lộ ảnh mới)
   useEffect(() => {
     const onScroll = () => {
       if (lightboxOpenRef.current || loadingRef.current) return
       if (page >= totalPages - 1) return
-      if (window.scrollY < 400) load(page + 1, true)
+      if (window.scrollY < SCROLL_TRIGGER) load(page + 1, true, true)
     }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
@@ -234,7 +237,6 @@ export default function MediaGallery({
   }
 
   const hasFilter = onlyFav || query || fromMs != null
-  const hasMore = page < totalPages - 1
   const groups = groupByDate(items, Date.now(), granularity)
   const freshIds = new Set(items.slice(0, freshCount.current).map(i => i.id))
 
@@ -245,37 +247,20 @@ export default function MediaGallery({
           from { opacity: 0; transform: scale(.94) translateY(6px); }
           to   { opacity: 1; transform: none; }
         }
-        @keyframes mediaInTop {
-          from { opacity: 0; transform: translateY(-14px) scale(.96); }
-          to   { opacity: 1; transform: none; }
-        }
         @keyframes groupIn {
           from { opacity: 0; transform: translateY(-4px); }
           to   { opacity: 1; transform: none; }
         }
+        /* Chỉ lô ĐẦU TIÊN (không phải file chèn thêm) mới chạy hiệu ứng hiện dần,
+           để lúc cuộn lên tải thêm KHÔNG bị chớp trắng. */
         .media-tile  { animation: mediaIn .26s cubic-bezier(.2,.8,.3,1) both; }
-        .media-tile-new { animation: mediaInTop .34s cubic-bezier(.2,.8,.3,1) both; }
         .media-group { animation: groupIn .2s ease both; }
         @media (prefers-reduced-motion: reduce) {
-          .media-tile, .media-tile-new, .media-group { animation: none; }
+          .media-tile, .media-group { animation: none; }
         }
       `}</style>
 
-      {/* Chừa khoảng trên để hàng ảnh đầu không dính sát cụm nút chức năng */}
       <div className="pt-3" />
-
-      {hasMore && !loading && (
-        <div className="py-3 text-center">
-          {prepending ? (
-            <span className="inline-flex items-center gap-2 text-xs text-gray-400">
-              <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-200 border-t-blue-500 animate-spin" />
-              Đang tải thêm...
-            </span>
-          ) : (
-            <span className="text-xs text-gray-300">↑ Cuộn lên để xem file cũ hơn</span>
-          )}
-        </div>
-      )}
 
       {loading ? (
         <div className="pt-1"><SkeletonTiles count={20} /></div>
@@ -297,7 +282,8 @@ export default function MediaGallery({
               {group.items.map((it, idx) => (
                 <div key={it.id}
                   className={`relative aspect-square overflow-hidden bg-gray-100 rounded-lg group
-                    ${freshIds.has(it.id) ? 'media-tile-new' : 'media-tile'}`}
+                    ${it.favorite ? 'ring-2 ring-red-500 ring-inset' : ''}
+                    ${freshIds.has(it.id) ? '' : 'media-tile'}`}
                   style={{ animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
 
                   <button onClick={() => setLightbox(items.findIndex(x => x.id === it.id))}
@@ -316,13 +302,6 @@ export default function MediaGallery({
                       <span className="w-8 h-8 rounded-full bg-black/50 text-white text-xs flex items-center justify-center">▶</span>
                     </span>
                   )}
-
-                  <button onClick={() => handleFavorite(it)}
-                    aria-label={it.favorite ? 'Bỏ yêu thích' : 'Yêu thích'}
-                    className="absolute bottom-1 right-1 w-7 h-7 rounded-full bg-black/35 backdrop-blur-sm
-                      flex items-center justify-center text-xs active:scale-90 transition">
-                    {it.favorite ? '❤️' : '🤍'}
-                  </button>
 
                   {it.source === 'WATERMARK' && (
                     <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-blue-600/90 text-white text-[9px] font-bold pointer-events-none">
