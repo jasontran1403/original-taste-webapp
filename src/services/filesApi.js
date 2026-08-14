@@ -68,6 +68,14 @@ export const renameFile = async (id, name) =>
 
 export const deleteFile = id => api.delete(`/api/tools/files/${id}`)
 
+/** Xóa nhiều tệp cùng lúc */
+export const deleteFilesBatch = ids =>
+  api.post('/api/tools/files/delete-batch', { ids })
+
+/** URL tải nhiều tệp về dưới dạng 1 file zip */
+export const filesZipUrl = ids =>
+  `${BASE}/api/tools/files/download-zip?ids=${ids.join(',')}`
+
 // ═══════════════════════════════════════════════════════════════════
 // Tải lên
 // ═══════════════════════════════════════════════════════════════════

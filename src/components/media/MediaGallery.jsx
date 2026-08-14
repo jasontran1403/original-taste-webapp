@@ -1,10 +1,24 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import {
   listMedia, deleteMedia, renameMedia, favoriteMedia, mediaUrl,
+  deleteMediaBatch, mediaZipUrl,
 } from '../../services/api'
 import MediaLightbox from './MediaLightbox'
 import { groupByDate } from './groupByDate'
 import { SkeletonTiles } from '../common/Skeleton'
+import { useSweepSelect } from '../../hooks/useSweepSelect'
+import SelectionBar from '../common/SelectionBar'
+import ConfirmModal from '../common/ConfirmModal'
+
+/** Kích hoạt tải file qua thẻ <a> ẩn (server ép Content-Disposition nên tải thẳng) */
+function triggerDownload(url) {
+  const a = document.createElement('a')
+  a.href = url
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
 
 /**
  * Thư viện ảnh/video — cũ nhất ở trên, mới nhất ở đáy; mở trang cuộn sẵn xuống
@@ -226,6 +240,47 @@ export default function MediaGallery({
     }
   }
 
+  // ── Chọn nhiều để tải/xóa hàng loạt ────────────────────────────
+  const gridRef = useRef(null)
+  const sel = useSweepSelect(gridRef)
+  const [askDelete, setAskDelete] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  // Đang chọn thì khoá lightbox (không mở khi bấm)
+  const openItem = it => {
+    if (sel.consumeClick()) return
+    if (sel.selectMode) { sel.toggle(it.id); return }
+    setLightbox(items.findIndex(x => x.id === it.id))
+  }
+
+  const selectedIds = () => [...sel.selected].map(Number)
+
+  const downloadSelected = () => {
+    const ids = selectedIds()
+    if (ids.length === 0) return
+    triggerDownload(mediaZipUrl(ids))
+    onNotify?.(`Đang tải ${ids.length} mục...`)
+  }
+
+  const confirmDeleteSelected = async () => {
+    const ids = selectedIds()
+    setBusy(true)
+    try {
+      await deleteMediaBatch(ids)
+      const rm = new Set(ids)
+      setItems(prev => prev.filter(i => !rm.has(i.id)))
+      setCount(c => Math.max(0, c - ids.length))
+      setLightbox(null)
+      onNotify?.(`Đã xóa ${ids.length} mục`)
+      sel.exit()
+    } catch {
+      onNotify?.('Xóa thất bại', false)
+    } finally {
+      setBusy(false)
+      setAskDelete(false)
+    }
+  }
+
   const hasFilter = onlyFav || query || fromMs != null
   const groups = groupByDate(items, Date.now(), granularity)
   const freshIds = new Set(items.slice(0, freshCount.current).map(i => i.id))
@@ -260,7 +315,8 @@ export default function MediaGallery({
           <p className="text-sm">{hasFilter ? 'Không có mục nào khớp bộ lọc' : 'Chưa có tài nguyên nào'}</p>
         </div>
       ) : (
-        groups.map(group => (
+        <div ref={gridRef} style={{ touchAction: sel.selectMode ? 'none' : 'auto' }}>
+        {groups.map(group => (
           <section key={group.key} className="mb-4 media-group">
             <h3 className="py-1.5 text-xs font-bold text-gray-500 uppercase tracking-wider">
               {group.label}
@@ -269,25 +325,26 @@ export default function MediaGallery({
 
             <div className="grid gap-1.5"
               style={{ gridTemplateColumns: `repeat(${COLUMNS}, minmax(0, 1fr))` }}>
-              {group.items.map((it, idx) => (
-                <div key={it.id}
+              {group.items.map((it, idx) => {
+                const picked = sel.isSelected(it.id)
+                return (
+                <div key={it.id} data-select-id={it.id}
                   className={`relative aspect-square overflow-hidden bg-gray-100 rounded-lg group
-                    ${freshIds.has(it.id) ? '' : 'media-tile'}`}
+                    ${freshIds.has(it.id) ? '' : 'media-tile'}
+                    ${picked ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
                   style={{ animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
 
-                  <button onClick={() => setLightbox(items.findIndex(x => x.id === it.id))}
-                    className="w-full h-full">
+                  <button onClick={() => openItem(it)} className="w-full h-full">
                     <img
                       src={mediaUrl(sharp && it.mediaType !== 'VIDEO' ? it.url : it.thumbUrl)}
                       alt={it.originalName}
                       loading="lazy"
                       decoding="async"
-                      className="w-full h-full object-cover group-hover:brightness-90 transition"
+                      className={`w-full h-full object-cover transition
+                        ${picked ? 'brightness-90 scale-95' : 'group-hover:brightness-90'}`}
                     />
                   </button>
 
-                  {/* Viền ĐỎ cho file đã thả tim — VẼ ĐÈ LÊN ẢNH nên không bị mất
-                      sau khi ảnh tải xong (ring-inset trên ô sẽ bị ảnh che). */}
                   {it.favorite && (
                     <span className="absolute inset-0 rounded-lg ring-2 ring-red-500 ring-inset pointer-events-none z-[2]" />
                   )}
@@ -303,11 +360,22 @@ export default function MediaGallery({
                       WM
                     </span>
                   )}
+
+                  {/* Dấu tích khi đang ở chế độ chọn */}
+                  {sel.selectMode && (
+                    <span className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center
+                      justify-center text-[11px] pointer-events-none z-[3]
+                      ${picked ? 'bg-blue-500 border-white text-white' : 'bg-black/30 border-white/80 text-transparent'}`}>
+                      ✓
+                    </span>
+                  )}
                 </div>
-              ))}
+                )
+              })}
             </div>
           </section>
-        ))
+        ))}
+        </div>
       )}
 
       {lightbox !== null && items[lightbox] && (
@@ -321,6 +389,27 @@ export default function MediaGallery({
           onFavorite={handleFavorite}
         />
       )}
+
+      {sel.selectMode && (
+        <SelectionBar
+          count={sel.count}
+          busy={busy}
+          onCancel={sel.exit}
+          onDownload={downloadSelected}
+          onDelete={() => sel.count > 0 && setAskDelete(true)}
+        />
+      )}
+
+      <ConfirmModal
+        open={askDelete}
+        danger
+        title={`Xóa ${sel.count} mục?`}
+        message="Các ảnh/video đã chọn sẽ bị xóa vĩnh viễn và không thể khôi phục."
+        confirmLabel="Xóa"
+        busy={busy}
+        onConfirm={confirmDeleteSelected}
+        onCancel={() => setAskDelete(false)}
+      />
     </>
   )
 }

@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   listFiles, listFileFacets, renameFile, deleteFile, downloadFileAsset, fileUrl,
+  deleteFilesBatch, filesZipUrl,
 } from '../../services/filesApi'
+import { useSweepSelect } from '../../hooks/useSweepSelect'
+import SelectionBar from '../common/SelectionBar'
+import ConfirmModal from '../common/ConfirmModal'
 import {
   iconOf, badgeClassOf, fmtSize, fmtDateTime, fmtRelative, splitName,
   isPreviewable, KIND_LABEL, kindOf,
@@ -76,6 +80,12 @@ export default function FilesBrowser({ onNotify }) {
   const loadingRef  = useRef(false)
   const sentinelRef = useRef(null)
   const pageSizeRef = useRef(computePageSize())
+
+  // Chọn nhiều tệp để tải/xóa hàng loạt
+  const listRef = useRef(null)
+  const sel = useSweepSelect(listRef)
+  const [askDelete, setAskDelete] = useState(false)
+  const [busy, setBusy] = useState(false)
   // Đánh dấu lô vừa chèn để chỉ chạy animation cho dòng mới, không chạy lại
   // cho toàn bộ danh sách mỗi lần vẽ
   const freshFrom   = useRef(0)
@@ -217,6 +227,42 @@ export default function FilesBrowser({ onNotify }) {
       await downloadFileAsset(asset)
     } catch {
       onNotify?.('Không tải được tệp', false)
+    }
+  }
+
+  // ── Chọn nhiều ──
+  const selectedIds = () => [...sel.selected].map(Number)
+
+  const openRow = item => {
+    if (sel.consumeClick()) return
+    if (sel.selectMode) { sel.toggle(item.id); return }
+    if (isPreviewable(item) && !renaming) setPreview(item)
+  }
+
+  const downloadSelected = () => {
+    const ids = selectedIds()
+    if (ids.length === 0) return
+    const a = document.createElement('a')
+    a.href = filesZipUrl(ids); a.rel = 'noopener'
+    document.body.appendChild(a); a.click(); a.remove()
+    onNotify?.(`Đang tải ${ids.length} tệp...`)
+  }
+
+  const confirmDeleteSelected = async () => {
+    const ids = selectedIds()
+    setBusy(true)
+    try {
+      await deleteFilesBatch(ids)
+      const rm = new Set(ids)
+      setItems(prev => prev.filter(i => !rm.has(i.id)))
+      setCount(c => Math.max(0, c - ids.length))
+      onNotify?.(`Đã xóa ${ids.length} tệp`)
+      sel.exit()
+    } catch {
+      onNotify?.('Xóa thất bại', false)
+    } finally {
+      setBusy(false)
+      setAskDelete(false)
     }
   }
 
@@ -368,7 +414,8 @@ export default function FilesBrowser({ onNotify }) {
             )}
           </div>
         ) : (
-          <div className="space-y-1.5">
+          <div ref={listRef} className="space-y-1.5"
+            style={{ touchAction: sel.selectMode ? 'none' : 'auto' }}>
             {items.map((item, idx) => (
               <FileRow
                 key={item.id}
@@ -377,7 +424,9 @@ export default function FilesBrowser({ onNotify }) {
                 freshIndex={idx - freshFrom.current}
                 renaming={renaming?.id === item.id ? renaming : null}
                 confirming={confirmDel === item.id}
-                onOpen={() => setPreview(item)}
+                selectMode={sel.selectMode}
+                picked={sel.isSelected(item.id)}
+                onOpen={() => openRow(item)}
                 onStartRename={() => setRenaming({ id: item.id, draft: splitName(item.originalName).base })}
                 onChangeRename={v => setRenaming({ id: item.id, draft: v })}
                 onCommitRename={() => handleRename(item, renaming.draft)}
@@ -405,6 +454,8 @@ export default function FilesBrowser({ onNotify }) {
             <span className="text-xs text-gray-300">Đã hiển thị tất cả {totalCount} tệp</span>
           ) : null}
         </div>
+
+        {sel.selectMode && <div className="h-16" />}
       </div>
 
       {/* Hộp thoại */}
@@ -432,6 +483,27 @@ export default function FilesBrowser({ onNotify }) {
       {printing && (
         <PrintDialog asset={printing} onClose={() => setPrinting(null)} onNotify={onNotify} />
       )}
+
+      {sel.selectMode && (
+        <SelectionBar
+          count={sel.count}
+          busy={busy}
+          onCancel={sel.exit}
+          onDownload={downloadSelected}
+          onDelete={() => sel.count > 0 && setAskDelete(true)}
+        />
+      )}
+
+      <ConfirmModal
+        open={askDelete}
+        danger
+        title={`Xóa ${sel.count} tệp?`}
+        message="Các tệp đã chọn sẽ bị xóa vĩnh viễn và không thể khôi phục."
+        confirmLabel="Xóa"
+        busy={busy}
+        onConfirm={confirmDeleteSelected}
+        onCancel={() => setAskDelete(false)}
+      />
     </>
   )
 }
@@ -439,7 +511,7 @@ export default function FilesBrowser({ onNotify }) {
 /* ── Một dòng tệp ────────────────────────────────────────────────── */
 
 function FileRow({
-  asset, fresh, freshIndex, renaming, confirming,
+  asset, fresh, freshIndex, renaming, confirming, selectMode, picked,
   onOpen, onStartRename, onChangeRename, onCommitRename, onCancelRename,
   onAskDelete, onCancelDelete, onConfirmDelete, onDownload,
 }) {
@@ -448,13 +520,23 @@ function FileRow({
 
   return (
     <div
-      // Bấm một lần là mở xem trước. Nhân đôi vẫn chạy được (lần bấm đầu đã mở),
-      // nên ai quen thao tác kiểu File Explorer cũng không bị hụt.
-      onClick={() => canPreview && !renaming && onOpen()}
-      className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white
-        border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all
-        ${canPreview ? 'cursor-pointer' : ''} ${fresh ? 'file-row-new' : ''}`}
+      data-select-id={asset.id}
+      // Bấm một lần là mở xem trước (hoặc bật/tắt chọn khi đang ở chế độ chọn).
+      onClick={() => (selectMode ? onOpen() : (canPreview && !renaming && onOpen()))}
+      className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all
+        ${picked
+          ? 'bg-blue-50 border border-blue-300 shadow-sm'
+          : 'bg-white border border-gray-100 hover:border-gray-200 hover:shadow-sm'}
+        ${(canPreview || selectMode) ? 'cursor-pointer' : ''} ${fresh ? 'file-row-new' : ''}`}
       style={fresh ? { animationDelay: `${Math.min(freshIndex, 10) * 32}ms` } : undefined}>
+
+      {/* Ô đánh dấu khi đang chọn */}
+      {selectMode && (
+        <span className={`w-5 h-5 shrink-0 rounded-full border-2 flex items-center justify-center
+          text-[11px] ${picked ? 'bg-blue-500 border-blue-500 text-white' : 'bg-white border-gray-300 text-transparent'}`}>
+          ✓
+        </span>
+      )}
 
       {/* Biểu tượng hoặc ảnh thu nhỏ */}
       <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden bg-gray-50
@@ -522,7 +604,7 @@ function FileRow({
         rồi, thêm nút nữa chỉ làm thừa. Cũng không có nút in: in nằm trong cửa sổ
         xem trước, nơi người dùng đã nhìn thấy nội dung sắp in.
       */}
-      {!renaming && !confirming && (
+      {!renaming && !confirming && !selectMode && (
         <div className="shrink-0 flex items-center gap-0.5 sm:opacity-0 sm:group-hover:opacity-100
           transition-opacity" onClick={e => e.stopPropagation()}>
           <IconBtn onClick={onDownload} title="Tải về">⬇</IconBtn>
@@ -531,7 +613,7 @@ function FileRow({
         </div>
       )}
 
-      {confirming && (
+      {confirming && !selectMode && (
         <div className="shrink-0 flex items-center gap-2" onClick={e => e.stopPropagation()}>
           <span className="text-xs text-red-600 font-medium hidden sm:inline">Xóa vĩnh viễn?</span>
           <button onClick={onCancelDelete}

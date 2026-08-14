@@ -385,6 +385,14 @@ export const uploadOneFile = async (file, onProgress) => {
 
 export const deleteMedia = id => api.delete(`/api/tools/media/${id}`)
 
+/** Xóa nhiều mục cùng lúc */
+export const deleteMediaBatch = ids =>
+  api.post('/api/tools/media/delete-batch', { ids })
+
+/** URL tải nhiều ảnh/video về dưới dạng 1 file zip (server ép Content-Disposition) */
+export const mediaZipUrl = ids =>
+  `${BASE}/api/tools/media/download-zip?ids=${ids.join(',')}`
+
 /** Gắn watermark rồi lưu thẳng vào thư viện, trả về metadata của file mới */
 export const watermarkAndSave = (file, settings, onProgress) => {
   const form = new FormData()
