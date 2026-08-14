@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useToolsAuth } from '../../hooks/useToolsAuth'
 import MediaGallery, { TAB_BAR_HEIGHT } from '../../components/media/MediaGallery'
 import WatermarkEditor from '../../components/media/WatermarkEditor'
 import FilesBrowser from '../../components/files/FilesBrowser'
@@ -33,6 +35,14 @@ export default function MediaPage() {
   const [tab, setTab] = useState('library')
   const [refreshKey, setRefresh] = useState(0)
   const [toast, setToast] = useState(null)
+
+  const { auth, logout } = useToolsAuth()
+  const navigate = useNavigate()
+
+  const handleLogout = () => {
+    logout()
+    navigate('/tools/login', { replace: true })
+  }
 
   const notify = (msg, ok = true) => {
     setToast({ msg, ok })
@@ -75,6 +85,22 @@ export default function MediaPage() {
               <span>{icon}</span>{label}
             </button>
           ))}
+
+          {/* Tài khoản đang đăng nhập + đăng xuất, ghim mép phải */}
+          <div className="ml-auto flex items-center gap-2 shrink-0 pl-2">
+            {auth?.username && (
+              <span className="hidden sm:inline text-xs text-gray-400">
+                👤 {auth.username}
+              </span>
+            )}
+            <button onClick={handleLogout} title="Đăng xuất"
+              className="flex items-center gap-1 px-2.5 h-8 rounded-lg text-xs font-semibold
+                text-gray-500 border border-gray-200 bg-white hover:text-red-600 hover:border-red-200
+                active:scale-95 transition-colors">
+              <span className="text-sm leading-none">⎋</span>
+              <span className="hidden sm:inline">Đăng xuất</span>
+            </button>
+          </div>
         </div>
       </div>
 

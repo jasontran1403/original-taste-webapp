@@ -14,6 +14,8 @@ import OrderNotFound from './components/OrderNotFound'
 import QrPage from './pages/tools/QrPage'
 import ESignPage from './pages/accountant/ESignPage'
 import MediaPage from './pages/tools/MediaPage'
+import ToolsLoginPage from './pages/tools/ToolsLoginPage'
+import ToolsProtected from './components/tools/ToolsProtected'
 
 /** Chỉ ACCOUNTANT / SUPERADMIN — khu vực kế toán */
 function Protected({ children }) {
@@ -49,19 +51,26 @@ export default function App() {
         <Route path="/invoice-test" element={<Navigate to="/accountant/invoice-test" replace />} />
 
         {/*
-          ── Tiện ích nội bộ ──
-          KHÔNG yêu cầu đăng nhập, cũng không xuất hiện ở menu nào:
-          ai biết đường dẫn thì vào. Backend /api/tools/** cũng đã được
-          whitelist tương ứng trong SecurityConfiguration.
-          /tools/qr        — tạo mã QR
-          /tools/media     — thư viện tài nguyên + gắn watermark
-                             (/tools/watermark giữ lại cho link cũ)
+          ── Tiện ích nội bộ (/tools) ──
+          YÊU CẦU ĐĂNG NHẬP. Vào bất kỳ trang /tools/** nào mà chưa đăng nhập
+          (hoặc phiên đã hết hạn) đều bị đá sang /tools/login. Hai tài khoản
+          được phép nằm cứng trong services/toolsAuth.js, KHÔNG dùng bảng users.
 
-          Ký số PDF đã chuyển hẳn vào khu vực Kế toán (/accountant/sign),
-          không còn đường dẫn công khai /tools/sign nữa.
+          /tools           — thư viện tài nguyên: Hình ảnh · Tệp · Office · Watermark
+                             (trước đây là /tools/watermark)
+          /tools/qr        — tạo mã QR
+          /tools/login     — màn hình đăng nhập (công khai)
+
+          Lưu ý: đây là cổng chặn GIAO DIỆN. Các API /api/tools/** phía backend
+          vẫn công khai như thiết kế cũ (xem SecurityConfiguration). Ký số PDF
+          đã nằm trong khu Kế toán (/accountant/sign).
         */}
-        <Route path="/tools/qr"        element={<QrPage />} />
-        <Route path="/tools/watermark" element={<MediaPage />} />
+        <Route path="/tools/login" element={<ToolsLoginPage />} />
+        <Route path="/tools"       element={<ToolsProtected><MediaPage /></ToolsProtected>} />
+        <Route path="/tools/qr"    element={<ToolsProtected><QrPage /></ToolsProtected>} />
+
+        {/* Link cũ /tools/watermark → /tools, giữ để bookmark/QR cũ không chết */}
+        <Route path="/tools/watermark" element={<Navigate to="/tools" replace />} />
 
         {/*
           Route gốc và mọi route lạ → màn hình "không tìm thấy đơn hàng".

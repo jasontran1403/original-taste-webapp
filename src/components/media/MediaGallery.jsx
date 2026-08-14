@@ -8,6 +8,7 @@ import DateRangePicker from '../DateRangePicker'
 import { groupByDate } from './groupByDate'
 import { SkeletonTiles } from '../common/Skeleton'
 import { withMinDelay, MIN_LOADING_MS } from '../../lib/timing'
+import { usePinchZoom, zoomBounds } from '../../hooks/usePinchZoom'
 
 /**
  * Thư viện ảnh/video, bố cục theo đúng ứng dụng Ảnh của iPhone:
@@ -67,6 +68,19 @@ const toDateInput = d => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/** Nhớ mức zoom của người dùng giữa các lần mở trang */
+const ZOOM_KEY = 'media:zoomCols'
+
+/** Số cột khởi tạo: lấy mức đã lưu (kẹp trong giới hạn) hoặc mặc định theo màn hình */
+function initialColumns() {
+  const w = typeof window === 'undefined' ? 1024 : window.innerWidth
+  const b = zoomBounds(w)
+  const clamp = c => Math.max(b.min, Math.min(b.max, c))
+  const saved = parseInt(localStorage.getItem(ZOOM_KEY) || '', 10)
+  if (!Number.isNaN(saved)) return clamp(saved)
+  return clamp(columnsFor(w))
+}
+
 export default function MediaGallery({ refreshKey, onNotify }) {
   const [items, setItems]      = useState([])   // thứ tự HIỂN THỊ: cũ → mới
   const [page, setPage]        = useState(0)
@@ -86,6 +100,26 @@ export default function MediaGallery({ refreshKey, onNotify }) {
   const [from, setFrom]       = useState('')
   const [to, setTo]           = useState('')
 
+  // ── Zoom lưới ảnh (kiểu iPhone) ────────────────────────────────
+  const [columns, setColumns] = useState(initialColumns)
+  const columnsRef = useRef(columns)
+  const boundsRef  = useRef(zoomBounds(typeof window === 'undefined' ? 1024 : window.innerWidth))
+  const zoomRef    = useRef(null)            // phần tử bao lưới để bắt cử chỉ
+
+  const clampCols = c => Math.max(boundsRef.current.min, Math.min(boundsRef.current.max, c))
+  const canZoomIn  = columns > boundsRef.current.min   // ít cột hơn = ô to hơn
+  const canZoomOut = columns < boundsRef.current.max
+  const zoomIn  = () => setColumns(c => clampCols(c - 1))
+  const zoomOut = () => setColumns(c => clampCols(c + 1))
+
+  // Đồng bộ ref + ghi nhớ mức zoom mỗi khi đổi
+  useEffect(() => {
+    columnsRef.current = columns
+    try { localStorage.setItem(ZOOM_KEY, String(columns)) } catch { /* bỏ qua */ }
+  }, [columns])
+
+  usePinchZoom(zoomRef, { columnsRef, boundsRef, setColumns })
+
   const searchRef   = useRef(null)
   const pageSizeRef = useRef(computePageSize())
   const loadingRef  = useRef(false)          // chặn gọi trùng khi cuộn nhanh
@@ -101,9 +135,14 @@ export default function MediaGallery({ refreshKey, onNotify }) {
     return () => clearTimeout(searchRef.current)
   }, [search])
 
-  // Xoay ngang/dọc hoặc đổi cỡ cửa sổ → số cột đổi → tính lại cỡ trang
+  // Xoay ngang/dọc hoặc đổi cỡ cửa sổ → tính lại cỡ trang + kẹp lại mức zoom
   useEffect(() => {
-    const onResize = () => { pageSizeRef.current = computePageSize() }
+    const onResize = () => {
+      pageSizeRef.current = computePageSize()
+      boundsRef.current = zoomBounds(window.innerWidth)
+      const { min, max } = boundsRef.current
+      setColumns(c => Math.max(min, Math.min(max, c)))
+    }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -338,7 +377,28 @@ export default function MediaGallery({ refreshKey, onNotify }) {
             <span className="hidden sm:inline">Tìm kiếm</span>
           </button>
 
-          <span className="text-xs sm:text-sm text-gray-400 ml-auto shrink-0">{totalCount} mục</span>
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            {/* Zoom lưới — cũng dùng được pinch (cảm ứng) và Ctrl+lăn (máy tính) */}
+            <div className="flex items-center rounded-lg border border-gray-200 bg-white overflow-hidden"
+              title="Phóng to / thu nhỏ ảnh — hoặc chụm 2 ngón / giữ Ctrl và lăn chuột">
+              <button onClick={zoomOut} disabled={!canZoomOut} aria-label="Thu nhỏ"
+                className="w-8 h-9 flex items-center justify-center text-gray-600
+                  disabled:text-gray-300 hover:bg-gray-50 active:scale-95 transition">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <circle cx="11" cy="11" r="7" /><line x1="16.5" y1="16.5" x2="21" y2="21" /><line x1="8" y1="11" x2="14" y2="11" />
+                </svg>
+              </button>
+              <div className="w-px h-5 bg-gray-200" />
+              <button onClick={zoomIn} disabled={!canZoomIn} aria-label="Phóng to"
+                className="w-8 h-9 flex items-center justify-center text-gray-600
+                  disabled:text-gray-300 hover:bg-gray-50 active:scale-95 transition">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                  <circle cx="11" cy="11" r="7" /><line x1="16.5" y1="16.5" x2="21" y2="21" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+                </svg>
+              </button>
+            </div>
+            <span className="text-xs sm:text-sm text-gray-400">{totalCount} mục</span>
+          </div>
         </div>
 
         {/* Bảng tìm kiếm — mở bằng nút 🔍, gộp cả tìm theo tên và theo ngày */}
@@ -405,7 +465,8 @@ export default function MediaGallery({ refreshKey, onNotify }) {
           <p className="text-sm">{hasFilter ? 'Không có mục nào khớp bộ lọc' : 'Chưa có tài nguyên nào'}</p>
         </div>
       ) : (
-        groups.map(group => (
+        <div ref={zoomRef} style={{ touchAction: 'pan-y' }}>
+        {groups.map(group => (
           <section key={group.key} className="mb-5 media-group">
             {/* Tiêu đề dính — cuộn tới đâu thấy mốc thời gian tới đó */}
             <h3 className="sticky z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-1.5
@@ -415,7 +476,8 @@ export default function MediaGallery({ refreshKey, onNotify }) {
               <span className="ml-2 font-normal text-gray-300 normal-case">{group.items.length}</span>
             </h3>
 
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-1.5 sm:gap-2 mt-2">
+            <div className="grid gap-1.5 sm:gap-2 mt-2"
+              style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
               {group.items.map((it, idx) => (
                 <div key={it.id}
                   className={`relative aspect-square rounded-lg overflow-hidden bg-gray-100 group
@@ -456,7 +518,8 @@ export default function MediaGallery({ refreshKey, onNotify }) {
               ))}
             </div>
           </section>
-        ))
+        ))}
+        </div>
       )}
 
       {showUpload && (
