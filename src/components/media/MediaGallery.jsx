@@ -96,17 +96,15 @@ export default function MediaGallery({
   })
 
   /**
-   * @param prepend true = chèn file cũ vào đầu
-   * @param reveal  true = sau khi chèn thì cuộn MƯỢT lên để lộ ảnh mới
-   *                (chỉ dùng khi người dùng chủ động cuộn lên; auto-fill thì false)
+   * @param prepend true = chèn file cũ vào đầu, GIỮ nguyên vị trí (không tự cuộn)
    */
-  const load = useCallback(async (targetPage, prepend, reveal = false) => {
+  const load = useCallback(async (targetPage, prepend) => {
     if (loadingRef.current) return
     loadingRef.current = true
     if (!prepend) setLoading(true)
 
     pendingScroll.current = prepend
-      ? { prevHeight: document.documentElement.scrollHeight, reveal }
+      ? { prevHeight: document.documentElement.scrollHeight }
       : (smoothBottom.current ? 'bottom-smooth' : 'bottom')
     if (!prepend) smoothBottom.current = false
 
@@ -144,8 +142,7 @@ export default function MediaGallery({
 
   // Sau khi DOM đổi:
   //  • lần đầu/đổi lọc → xuống đáy
-  //  • chèn ở đầu       → GIỮ nguyên vị trí (không nhảy); nếu reveal thì cuộn
-  //    MƯỢT lên một đoạn để người dùng thấy ảnh vừa thêm.
+  //  • chèn ở đầu       → GIỮ nguyên vị trí (không nhảy, KHÔNG tự cuộn)
   useLayoutEffect(() => {
     const action = pendingScroll.current
     if (!action) return
@@ -159,16 +156,9 @@ export default function MediaGallery({
       return
     }
 
-    // prepend
+    // prepend — bù đúng phần chiều cao vừa thêm để màn hình đứng yên
     const delta = document.documentElement.scrollHeight - action.prevHeight
-    if (delta <= 0) return
-    const base = window.scrollY + delta
-    window.scrollTo(0, base)                 // giữ vị trí, tuyệt đối không nhảy
-    if (action.reveal) {
-      const up = Math.min(delta, window.innerHeight * 0.85)
-      const target = Math.max(SCROLL_TRIGGER + 60, base - up)
-      requestAnimationFrame(() => window.scrollTo({ top: target, behavior: 'smooth' }))
-    }
+    if (delta > 0) window.scrollTo(0, window.scrollY + delta)
   }, [items])
 
   // Nội dung chưa đầy màn hình → tự tải thêm cho đủ (không reveal, giữ đáy)
@@ -177,16 +167,16 @@ export default function MediaGallery({
     if (lightboxOpenRef.current) return
     if (page >= totalPages - 1) return
     if (document.documentElement.scrollHeight <= window.innerHeight + 120) {
-      load(page + 1, true, false)
+      load(page + 1, true)
     }
   }, [items, loading, page, totalPages, load])
 
-  // Cuộn gần lên đỉnh → tải thêm file cũ hơn (reveal = cuộn mượt lộ ảnh mới)
+  // Cuộn gần lên đỉnh → tải thêm file cũ hơn (chỉ chèn, KHÔNG tự cuộn)
   useEffect(() => {
     const onScroll = () => {
       if (lightboxOpenRef.current || loadingRef.current) return
       if (page >= totalPages - 1) return
-      if (window.scrollY < SCROLL_TRIGGER) load(page + 1, true, true)
+      if (window.scrollY < SCROLL_TRIGGER) load(page + 1, true)
     }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
@@ -282,7 +272,6 @@ export default function MediaGallery({
               {group.items.map((it, idx) => (
                 <div key={it.id}
                   className={`relative aspect-square overflow-hidden bg-gray-100 rounded-lg group
-                    ${it.favorite ? 'ring-2 ring-red-500 ring-inset' : ''}
                     ${freshIds.has(it.id) ? '' : 'media-tile'}`}
                   style={{ animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
 
@@ -296,6 +285,12 @@ export default function MediaGallery({
                       className="w-full h-full object-cover group-hover:brightness-90 transition"
                     />
                   </button>
+
+                  {/* Viền ĐỎ cho file đã thả tim — VẼ ĐÈ LÊN ẢNH nên không bị mất
+                      sau khi ảnh tải xong (ring-inset trên ô sẽ bị ảnh che). */}
+                  {it.favorite && (
+                    <span className="absolute inset-0 rounded-lg ring-2 ring-red-500 ring-inset pointer-events-none z-[2]" />
+                  )}
 
                   {it.mediaType === 'VIDEO' && (
                     <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
