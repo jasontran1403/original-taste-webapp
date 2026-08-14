@@ -21,6 +21,7 @@ import { useEffect, useRef } from 'react'
  */
 export function usePinchZoom(targetRef, { columnsRef, boundsRef, setColumns }) {
   const pinch = useRef(null)          // { startDist, startCols, last }
+  const didPinch = useRef(false)      // vừa pinch xong → nuốt "click ma" mở ảnh
   const wheelReadyAt = useRef(0)      // tiết lưu wheel để không nhảy vọt
 
   useEffect(() => {
@@ -37,11 +38,16 @@ export function usePinchZoom(targetRef, { columnsRef, boundsRef, setColumns }) {
 
     const onTouchStart = e => {
       if (e.touches.length === 2) {
+        didPinch.current = false
         pinch.current = {
           startDist: dist(e.touches),
           startCols: columnsRef.current,
           last: columnsRef.current,
         }
+      } else if (e.touches.length === 1) {
+        // Chạm một ngón mới → xoá cờ pinch cũ để không chặn nhầm cú chạm mở ảnh
+        didPinch.current = false
+        pinch.current = null
       }
     }
 
@@ -50,6 +56,7 @@ export function usePinchZoom(targetRef, { columnsRef, boundsRef, setColumns }) {
       e.preventDefault()                       // chặn zoom trang của trình duyệt
       const ratio = dist(e.touches) / pinch.current.startDist
       if (!isFinite(ratio) || ratio <= 0) return
+      didPinch.current = true
       // Xòe ra (ratio > 1) → ít cột hơn (ô to hơn)
       const next = clamp(Math.round(pinch.current.startCols / ratio))
       if (next !== pinch.current.last) {
@@ -59,10 +66,22 @@ export function usePinchZoom(targetRef, { columnsRef, boundsRef, setColumns }) {
     }
 
     const onTouchEnd = e => {
+      // Nhấc tay sau khi pinch → nuốt cú click tổng hợp để không mở nhầm ảnh
+      if (didPinch.current) e.preventDefault()
       if (e.touches.length < 2) pinch.current = null
+      if (e.touches.length === 0) {
+        // Để nguyên didPinch tới hết vòng sự kiện rồi mới xoá, đủ để chặn click
+        setTimeout(() => { didPinch.current = false }, 0)
+      }
     }
 
-    const onWheel = e => {
+    el.addEventListener('touchstart', onTouchStart, { passive: true })
+    el.addEventListener('touchmove',  onTouchMove,  { passive: false })
+    el.addEventListener('touchend',   onTouchEnd,   { passive: false })
+    el.addEventListener('touchcancel', onTouchEnd,  { passive: false })
+    el.addEventListener('wheel',       onWheel,     { passive: false })
+
+    function onWheel(e) {
       if (!e.ctrlKey) return                   // chỉ zoom khi Ctrl/⌘ hoặc pinch trackpad
       e.preventDefault()
       const now = Date.now()
@@ -71,12 +90,6 @@ export function usePinchZoom(targetRef, { columnsRef, boundsRef, setColumns }) {
       // Lăn lên / chụm ra (deltaY < 0) → ít cột hơn (phóng to)
       setColumns(clamp(columnsRef.current + (e.deltaY < 0 ? -1 : 1)))
     }
-
-    el.addEventListener('touchstart', onTouchStart, { passive: true })
-    el.addEventListener('touchmove',  onTouchMove,  { passive: false })
-    el.addEventListener('touchend',   onTouchEnd,   { passive: true })
-    el.addEventListener('touchcancel', onTouchEnd,  { passive: true })
-    el.addEventListener('wheel',       onWheel,     { passive: false })
 
     return () => {
       el.removeEventListener('touchstart', onTouchStart)

@@ -81,6 +81,25 @@ function initialColumns() {
   return clamp(columnsFor(w))
 }
 
+/**
+ * Bề rộng THẬT (CSS px) của một ô theo số cột hiện tại. Phải khớp lề + gap của
+ * grid: lề = px-4/sm:px-6/lg:px-8 (32/48/64 tổng hai bên), gap = 6/8.
+ */
+function tileWidthFor(cols) {
+  if (typeof window === 'undefined') return 120
+  const w = window.innerWidth
+  const pad = w < 640 ? 32 : w < 1024 ? 48 : 64
+  const gap = w < 640 ? 6 : 8
+  return Math.max(0, (w - pad - gap * (cols - 1)) / cols)
+}
+
+/**
+ * Ô rộng hơn ngưỡng này thì thumbnail nhỏ bị kéo giãn mờ → dùng luôn ảnh gốc
+ * cho nét. Ngưỡng đặt theo CSS px (không nhân devicePixelRatio) để không kéo
+ * ảnh gốc quá sớm ở mức zoom thường, chỉ nét khi thật sự phóng to.
+ */
+const SHARP_TILE_PX = 190
+
 export default function MediaGallery({ refreshKey, onNotify }) {
   const [items, setItems]      = useState([])   // thứ tự HIỂN THỊ: cũ → mới
   const [page, setPage]        = useState(0)
@@ -102,6 +121,7 @@ export default function MediaGallery({ refreshKey, onNotify }) {
 
   // ── Zoom lưới ảnh (kiểu iPhone) ────────────────────────────────
   const [columns, setColumns] = useState(initialColumns)
+  const [tilePx, setTilePx]   = useState(() => tileWidthFor(initialColumns()))
   const columnsRef = useRef(columns)
   const boundsRef  = useRef(zoomBounds(typeof window === 'undefined' ? 1024 : window.innerWidth))
   const zoomRef    = useRef(null)            // phần tử bao lưới để bắt cử chỉ
@@ -112,9 +132,14 @@ export default function MediaGallery({ refreshKey, onNotify }) {
   const zoomIn  = () => setColumns(c => clampCols(c - 1))
   const zoomOut = () => setColumns(c => clampCols(c + 1))
 
-  // Đồng bộ ref + ghi nhớ mức zoom mỗi khi đổi
+  // Ô đủ to thì thumbnail bị mờ → dùng ảnh gốc cho nét (chỉ với ẢNH; video giữ
+  // thumbnail vì it.url là file video, không phải ảnh)
+  const sharp = tilePx >= SHARP_TILE_PX
+
+  // Đồng bộ ref + ghi nhớ mức zoom + cập nhật bề rộng ô mỗi khi đổi
   useEffect(() => {
     columnsRef.current = columns
+    setTilePx(tileWidthFor(columns))
     try { localStorage.setItem(ZOOM_KEY, String(columns)) } catch { /* bỏ qua */ }
   }, [columns])
 
@@ -141,7 +166,11 @@ export default function MediaGallery({ refreshKey, onNotify }) {
       pageSizeRef.current = computePageSize()
       boundsRef.current = zoomBounds(window.innerWidth)
       const { min, max } = boundsRef.current
-      setColumns(c => Math.max(min, Math.min(max, c)))
+      setColumns(c => {
+        const next = Math.max(min, Math.min(max, c))
+        setTilePx(tileWidthFor(next))
+        return next
+      })
     }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -378,9 +407,13 @@ export default function MediaGallery({ refreshKey, onNotify }) {
           </button>
 
           <div className="ml-auto flex items-center gap-2 shrink-0">
-            {/* Zoom lưới — cũng dùng được pinch (cảm ứng) và Ctrl+lăn (máy tính) */}
-            <div className="flex items-center rounded-lg border border-gray-200 bg-white overflow-hidden"
-              title="Phóng to / thu nhỏ ảnh — hoặc chụm 2 ngón / giữ Ctrl và lăn chuột">
+            {/*
+              Nút zoom chỉ hiện trên màn hình lớn (sm trở lên): desktop/laptop
+              không pinch được nên cần nút + Ctrl-lăn. Trên MOBILE ẩn hẳn nút,
+              chỉ zoom bằng chụm/xòe 2 ngón như iPhone.
+            */}
+            <div className="hidden sm:flex items-center rounded-lg border border-gray-200 bg-white overflow-hidden"
+              title="Phóng to / thu nhỏ ảnh — hoặc giữ Ctrl và lăn chuột">
               <button onClick={zoomOut} disabled={!canZoomOut} aria-label="Thu nhỏ"
                 className="w-8 h-9 flex items-center justify-center text-gray-600
                   disabled:text-gray-300 hover:bg-gray-50 active:scale-95 transition">
@@ -487,9 +520,10 @@ export default function MediaGallery({ refreshKey, onNotify }) {
                   <button onClick={() => setLightbox(items.findIndex(x => x.id === it.id))}
                     className="w-full h-full">
                     <img
-                      src={mediaUrl(it.thumbUrl)}
+                      src={mediaUrl(sharp && it.mediaType !== 'VIDEO' ? it.url : it.thumbUrl)}
                       alt={it.originalName}
                       loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:brightness-90 transition"
                     />
                   </button>
