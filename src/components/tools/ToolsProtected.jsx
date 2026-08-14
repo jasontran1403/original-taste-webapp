@@ -44,19 +44,35 @@ export default function ToolsProtected({ children }) {
     return () => { alive = false }
   }, [token, valid])
 
-  // Token còn sống → hẹn giờ đúng lúc hết hạn để đá ra ngay cả khi để yên tab
+  // Token còn sống → hẹn giờ đúng lúc hết hạn để đá ra ngay cả khi để yên tab.
+  //
+  // CẢNH BÁO: setTimeout dùng số nguyên 32-bit có dấu, tối đa ~2^31-1 ms
+  // (khoảng 24.8 ngày). Truyền số lớn hơn (VD token "ghi nhớ" 30 ngày) thì
+  // trình duyệt kích hoạt NGAY LẬP TỨC → tưởng nhầm là hết phiên. Vì vậy phải
+  // chia nhỏ: hẹn tối đa một "khúc", tới nơi kiểm tra lại, chưa hết hạn thì hẹn
+  // tiếp khúc sau.
   useEffect(() => {
     if (!valid) return
-    const p = decodeToken(token)
-    const ms = Math.max(0, p.exp * 1000 - Date.now())
-    const timer = setTimeout(() => {
-      if (!notified.current) {
-        notified.current = true
-        toast.error(EXPIRED_MSG)
+    let timer
+    const MAX_CHUNK = 2_000_000_000        // ~23 ngày, nằm gọn dưới ngưỡng 32-bit
+
+    const arm = () => {
+      const p = decodeToken(token)
+      if (!p || typeof p.exp !== 'number') return
+      const ms = p.exp * 1000 - Date.now()
+      if (ms <= 0) {                        // đã thật sự hết hạn
+        if (!notified.current) {
+          notified.current = true
+          toast.error(EXPIRED_MSG)
+        }
+        wipeToolsToken()
+        setKicked(true)
+        return
       }
-      wipeToolsToken()
-      setKicked(true)
-    }, ms)
+      timer = setTimeout(arm, Math.min(ms, MAX_CHUNK))
+    }
+
+    arm()
     return () => clearTimeout(timer)
   }, [token, valid])
 

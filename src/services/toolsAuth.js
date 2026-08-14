@@ -38,9 +38,15 @@ const K_TOKEN    = 'tools:token'
 const K_REMEMBER = 'tools:remember'
 const K_USERNAME = 'tools:username'
 
+/** Chuẩn hóa tên đăng nhập: bỏ khoảng trắng thừa + về chữ thường (không phân biệt hoa/thường) */
+export function normalizeUsername(username) {
+  return String(username || '').trim().toLowerCase()
+}
+
 export function checkCredentials(username, password) {
-  return Object.prototype.hasOwnProperty.call(ACCOUNTS, username)
-    && ACCOUNTS[username] === password
+  const u = normalizeUsername(username)
+  return Object.prototype.hasOwnProperty.call(ACCOUNTS, u)
+    && ACCOUNTS[u] === password
 }
 
 // ── base64url + HMAC-SHA256 (Web Crypto) ────────────────────────────────────

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   readToolsToken, decodeToken, isExpired,
-  createToken, saveToolsToken, wipeToolsToken, checkCredentials,
+  createToken, saveToolsToken, wipeToolsToken, checkCredentials, normalizeUsername,
   TTL_REMEMBER, TTL_SESSION,
 } from '../services/toolsAuth'
 
@@ -31,11 +31,12 @@ export function useToolsAuth() {
 
   /** @returns {Promise<{ok:boolean, message?:string}>} */
   const login = useCallback(async (username, password, remember = false) => {
-    if (!checkCredentials(username, password)) {
+    const uname = normalizeUsername(username)
+    if (!checkCredentials(uname, password)) {
       return { ok: false, message: 'Sai tên đăng nhập hoặc mật khẩu.' }
     }
-    const token = await createToken(username, remember ? TTL_REMEMBER : TTL_SESSION)
-    saveToolsToken(token, { remember, username })
+    const token = await createToken(uname, remember ? TTL_REMEMBER : TTL_SESSION)
+    saveToolsToken(token, { remember, username: uname })
     setAuth(currentAuth())
     return { ok: true }
   }, [])

@@ -4,6 +4,24 @@
 
 @layer base {
   * { box-sizing: border-box; }
+
+  /*
+    Khóa trang trong đúng khổ nhìn thấy: rộng đúng 100svw, không tràn ngang,
+    không kéo/nảy qua lại. svh/svw = kích thước "small viewport" nên không bị
+    nhảy khi thanh địa chỉ của trình duyệt di động thu vào/hiện ra.
+  */
+  html, body {
+    width: 100svw;
+    max-width: 100svw;
+    overflow-x: hidden;
+    overscroll-behavior: none;   /* chặn nảy/kéo ngang và pull-to-refresh lệch */
+  }
+  #root {
+    width: 100%;
+    max-width: 100svw;
+    overflow-x: hidden;
+  }
+
   body { font-family: 'Inter', system-ui, sans-serif; }
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { @apply bg-gray-100; }
