@@ -12,8 +12,9 @@ import { SkeletonStyles } from '../../components/common/Skeleton'
 /**
  * Bộ tiện ích: Hình ảnh · Tệp · Office · Watermark.
  *
- * PANEL điều khiển (dòng tab + các nút chức năng) và THANH LỌC DƯỚI (năm/tháng/
- * ngày) tự ẩn khi cuộn, hiện lại khi ngừng cuộn — có animation mượt.
+ * PANEL trên (dòng tab + 3 nút chức năng full-width) và THANH LỌC dưới (Năm/
+ * Tháng/Ngày) đều dùng hiệu ứng kính mờ (glassmorphism) và tự trượt ẩn khi
+ * cuộn, hiện lại khi ngừng cuộn.
  */
 
 const TABS = [
@@ -31,6 +32,15 @@ const GRANS = [
   { key: 'day',   label: 'Ngày' },
 ]
 
+/** Mốc bắt đầu của năm/tháng/ngày HIỆN TẠI (epoch ms) */
+function periodFrom(gran) {
+  const d = new Date()
+  if (gran === 'day')   { d.setHours(0, 0, 0, 0); return d.getTime() }
+  if (gran === 'month') return new Date(d.getFullYear(), d.getMonth(), 1).getTime()
+  if (gran === 'year')  return new Date(d.getFullYear(), 0, 1).getTime()
+  return null
+}
+
 export default function MediaPage() {
   const [tab, setTab] = useState('library')
   const [refreshKey, setRefresh] = useState(0)
@@ -39,24 +49,27 @@ export default function MediaPage() {
   const { auth, logout } = useToolsAuth()
   const navigate = useNavigate()
 
-  // ── Bộ điều khiển thư viện (nâng lên đây để nằm chung một panel) ──
-  const [showUpload, setUpload]   = useState(false)
-  const [onlyFav, setOnlyFav]     = useState(false)
+  // Bộ điều khiển thư viện
+  const [showUpload, setUpload]     = useState(false)
+  const [onlyFav, setOnlyFav]       = useState(false)
   const [showSearch, setShowSearch] = useState(false)
-  const [search, setSearch]       = useState('')
-  const [dateOn, setDateOn]       = useState(false)
-  const [from, setFrom]           = useState('')
-  const [to, setTo]               = useState('')
-  const [granularity, setGran]    = useState('month')
+  const [search, setSearch]         = useState('')
+  const [dateOn, setDateOn]         = useState(false)
+  const [from, setFrom]             = useState('')
+  const [to, setTo]                 = useState('')
 
-  // ── Panel tự ẩn khi cuộn, hiện lại khi ngừng ──
+  // Lọc theo Năm/Tháng/Ngày — mặc định KHÔNG chọn (null)
+  const [activeGran, setActiveGran] = useState(null)
+  const [filterNonce, setFilterNonce] = useState(0)
+
+  // Panel tự ẩn khi cuộn, hiện lại khi ngừng
   const [navHidden, setNavHidden] = useState(false)
   const idleTimer = useRef(null)
   useEffect(() => {
     const onScroll = () => {
       const y = window.scrollY || window.pageYOffset || 0
       clearTimeout(idleTimer.current)
-      if (y < 8) { setNavHidden(false); return }   // sát đỉnh → luôn hiện
+      if (y < 8) { setNavHidden(false); return }
       setNavHidden(true)
       idleTimer.current = setTimeout(() => setNavHidden(false), 220)
     }
@@ -64,7 +77,6 @@ export default function MediaPage() {
     return () => { window.removeEventListener('scroll', onScroll); clearTimeout(idleTimer.current) }
   }, [])
 
-  // Đổi tab thì luôn cho panel hiện lại
   useEffect(() => { setNavHidden(false) }, [tab])
 
   const handleLogout = () => {
@@ -94,8 +106,30 @@ export default function MediaPage() {
     setDateOn(true)
   }
 
+  /** Bấm nút Năm/Tháng/Ngày: đang chọn thì bỏ, chưa thì bật; luôn tăng nonce */
+  const pickGran = key => {
+    setActiveGran(g => (g === key ? null : key))
+    setFilterNonce(n => n + 1)
+  }
+
+  // Gộp thành mốc lọc gửi xuống gallery
+  let fromMs = null, toMs = null, expandable = false, granularity = 'auto'
+  if (activeGran) {
+    fromMs = periodFrom(activeGran)
+    toMs = null
+    expandable = true
+    granularity = activeGran
+  } else if (dateOn && from && to) {
+    fromMs = new Date(from + 'T00:00:00').getTime()
+    toMs   = new Date(to   + 'T23:59:59').getTime()
+  }
+
   const isLibrary = tab === 'library'
   const fullBleed = FULL_BLEED.has(tab)
+
+  // ── Kiểu nút kính mờ dùng chung ──
+  const glassBtn = 'flex-1 h-10 rounded-xl flex items-center justify-center gap-1.5 text-sm font-semibold ' +
+    'border backdrop-blur-md transition active:scale-95'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -109,8 +143,9 @@ export default function MediaPage() {
         </div>
       )}
 
-      {/* ══ PANEL TRÊN: dòng tab + các nút chức năng — tự trượt lên khi cuộn ══ */}
-      <header className="sticky top-0 z-30 bg-white border-b border-gray-200 will-change-transform"
+      {/* ══ PANEL TRÊN — kính mờ, tự trượt lên khi cuộn ══ */}
+      <header className="sticky top-0 z-30 bg-white/70 backdrop-blur-xl border-b border-white/40
+        shadow-sm will-change-transform"
         style={{ transform: navHidden ? 'translateY(-100%)' : 'translateY(0)', transition: 'transform .3s ease' }}>
 
         {/* Dòng 1 — đổi trang */}
@@ -130,11 +165,11 @@ export default function MediaPage() {
 
           <div className="ml-auto flex items-center gap-2 shrink-0 pl-2">
             {auth?.username && (
-              <span className="hidden sm:inline text-xs text-gray-400">👤 {auth.username}</span>
+              <span className="hidden sm:inline text-xs text-gray-500">👤 {auth.username}</span>
             )}
             <button onClick={handleLogout} title="Đăng xuất"
               className="flex items-center gap-1 px-2.5 h-8 rounded-lg text-xs font-semibold
-                text-gray-500 border border-gray-200 bg-white hover:text-red-600 hover:border-red-200
+                text-gray-500 border border-white/50 bg-white/40 backdrop-blur hover:text-red-600 hover:border-red-200
                 active:scale-95 transition-colors">
               <span className="text-sm leading-none">⎋</span>
               <span className="hidden sm:inline">Đăng xuất</span>
@@ -142,48 +177,43 @@ export default function MediaPage() {
           </div>
         </div>
 
-        {/* Dòng 2 — nút chức năng (chỉ ở tab Hình ảnh) */}
+        {/* Dòng 2 — 3 nút chức năng, FULL WIDTH, kính mờ (chỉ tab Hình ảnh) */}
         {isLibrary && (
-          <div className="w-full px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2 border-t border-gray-100">
-            <button onClick={() => setUpload(true)} title="Tải lên"
-              className="h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-semibold
-                flex items-center gap-1.5 active:scale-95 transition">
-              <span className="text-base leading-none">＋</span>
-              <span className="hidden xs:inline sm:inline">Tải lên</span>
+          <div className="w-full px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2 border-t border-white/40">
+            <button onClick={() => setUpload(true)}
+              className={`${glassBtn} bg-blue-600/90 text-white border-blue-400/50 shadow-lg shadow-blue-500/25`}>
+              <span className="text-base leading-none">＋</span> Tải lên
             </button>
 
-            <button onClick={() => setOnlyFav(f => !f)} title="Chỉ ảnh/video đã thả tim"
-              className={`h-9 px-3 rounded-lg text-sm font-semibold border flex items-center gap-1.5
-                active:scale-95 transition-colors
-                ${onlyFav ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-white border-gray-200 text-gray-500'}`}>
-              <span className="text-base leading-none">{onlyFav ? '❤️' : '🤍'}</span>
-              <span className="hidden sm:inline">Yêu thích</span>
+            <button onClick={() => setOnlyFav(f => !f)}
+              className={`${glassBtn} ${onlyFav
+                ? 'bg-rose-500/20 border-rose-300/60 text-rose-600'
+                : 'bg-white/50 border-white/60 text-gray-600'}`}>
+              <span className="text-base leading-none">{onlyFav ? '❤️' : '🤍'}</span> Yêu thích
             </button>
 
-            <button onClick={() => setShowSearch(v => !v)} title="Tìm kiếm"
-              className={`h-9 px-3 rounded-lg text-sm font-semibold border flex items-center gap-1.5
-                active:scale-95 transition-colors
-                ${showSearch || dateOn || search ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-500'}`}>
-              <span className="text-base leading-none">🔍</span>
-              <span className="hidden sm:inline">Tìm kiếm</span>
+            <button onClick={() => setShowSearch(v => !v)}
+              className={`${glassBtn} ${showSearch || dateOn || search
+                ? 'bg-blue-500/20 border-blue-300/60 text-blue-700'
+                : 'bg-white/50 border-white/60 text-gray-600'}`}>
+              <span className="text-base leading-none">🔍</span> Tìm kiếm
             </button>
           </div>
         )}
 
-        {/* Bảng tìm kiếm — hiện khi bật nút 🔍 */}
         {isLibrary && showSearch && (
           <div className="w-full px-4 sm:px-6 lg:px-8 pb-2 flex flex-col sm:flex-row sm:items-center gap-2">
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Tìm theo tên file..."
-              className="flex-1 min-w-0 px-3.5 py-2 bg-white border border-gray-200 rounded-lg text-sm
-                outline-none focus:border-blue-400 transition-colors placeholder:text-gray-300"
+              className="flex-1 min-w-0 px-3.5 py-2 bg-white/70 border border-white/60 rounded-lg text-sm
+                outline-none focus:border-blue-400 transition-colors placeholder:text-gray-400 backdrop-blur"
             />
             <div className="flex items-center gap-2">
               <button onClick={toggleDateFilter}
-                className={`h-9 px-3 rounded-lg text-sm font-semibold border shrink-0 transition-colors
-                  ${dateOn ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-500'}`}>
+                className={`h-9 px-3 rounded-lg text-sm font-semibold border shrink-0 transition-colors backdrop-blur
+                  ${dateOn ? 'bg-blue-500/20 border-blue-300/60 text-blue-700' : 'bg-white/50 border-white/60 text-gray-500'}`}>
                 🗓 Theo ngày
               </button>
               {dateOn && (
@@ -198,7 +228,7 @@ export default function MediaPage() {
       {/* ══ NỘI DUNG ══ */}
       <div className={fullBleed
         ? 'w-full px-2 sm:px-4 lg:px-6 pb-4'
-        : `w-full px-4 sm:px-6 lg:px-8 ${isLibrary ? 'pb-24' : 'pb-8'}`}>
+        : `w-full px-4 sm:px-6 lg:px-8 ${isLibrary ? 'pb-28' : 'pb-8'}`}>
 
         {tab === 'library' && (
           <MediaGallery
@@ -206,10 +236,11 @@ export default function MediaPage() {
             onNotify={notify}
             onlyFav={onlyFav}
             search={search}
-            dateOn={dateOn}
-            from={from}
-            to={to}
+            fromMs={fromMs}
+            toMs={toMs}
             granularity={granularity}
+            expandable={expandable}
+            filterNonce={filterNonce}
           />
         )}
 
@@ -222,22 +253,22 @@ export default function MediaPage() {
         )}
       </div>
 
-      {/* ══ THANH LỌC DƯỚI: Năm / Tháng / Ngày — tự trượt xuống khi cuộn ══ */}
+      {/* ══ THANH LỌC DƯỚI: Năm / Tháng / Ngày — kính mờ, full width ══ */}
       {isLibrary && (
-        <div className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-gray-200
-          will-change-transform"
+        <div className="fixed bottom-0 inset-x-0 z-30 bg-white/40 backdrop-blur-2xl
+          border-t border-white/50 shadow-[0_-4px_24px_rgba(0,0,0,0.08)] will-change-transform"
           style={{
             transform: navHidden ? 'translateY(100%)' : 'translateY(0)',
             transition: 'transform .3s ease',
             paddingBottom: 'env(safe-area-inset-bottom)',
           }}>
-          <div className="w-full px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-center gap-2">
+          <div className="w-full px-4 sm:px-6 lg:px-8 py-2.5 flex items-center gap-2">
             {GRANS.map(({ key, label }) => (
-              <button key={key} onClick={() => setGran(key)}
-                className={`px-4 h-9 rounded-full text-sm font-semibold border transition-colors
-                  ${granularity === key
-                    ? 'bg-blue-600 border-blue-600 text-white'
-                    : 'bg-white border-gray-200 text-gray-500 hover:text-gray-800'}`}>
+              <button key={key} onClick={() => pickGran(key)}
+                className={`flex-1 h-10 rounded-xl text-sm font-semibold border backdrop-blur-md transition active:scale-95
+                  ${activeGran === key
+                    ? 'bg-blue-600/90 border-blue-400/50 text-white shadow-lg shadow-blue-500/25'
+                    : 'bg-white/50 border-white/60 text-gray-600 hover:text-gray-900'}`}>
                 {label}
               </button>
             ))}
