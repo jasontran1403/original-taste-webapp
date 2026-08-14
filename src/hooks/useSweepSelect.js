@@ -92,6 +92,8 @@ export function useSweepSelect(containerRef) {
       point.current = { x: e.clientX, y: e.clientY }
 
       if (selectModeRef.current) {
+        // Chặn bôi đen/kéo mặc định của chuột để cú kéo là "quét chọn"
+        if (e.pointerType === 'mouse' && e.cancelable) e.preventDefault()
         const on = !selectedRef.current.has(id)
         sweep.current = { target: on, applied: new Set([id]) }
         applyTo(id, on)
@@ -133,7 +135,7 @@ export function useSweepSelect(containerRef) {
       stopScroll()
     }
 
-    window.addEventListener('pointerdown', onDown, { passive: true })
+    window.addEventListener('pointerdown', onDown, { passive: false })
     window.addEventListener('pointermove', onMove, { passive: false })
     window.addEventListener('pointerup', onUp, { passive: true })
     window.addEventListener('pointercancel', onUp, { passive: true })
@@ -151,10 +153,26 @@ export function useSweepSelect(containerRef) {
     const empty = new Set(); setSelected(empty); selectedRef.current = empty
   }, [])
 
+  // "Bỏ chọn tất cả": xóa hết lựa chọn nhưng VẪN ở chế độ chọn (để chọn lại).
+  const justCleared = useRef(false)
+  const clearStay = useCallback(() => {
+    justCleared.current = true
+    const s = new Set(); setSelected(s); selectedRef.current = s
+  }, [])
+
+  // Bỏ chọn dần bằng thao tác (chạm/quét) tới khi hết → tự thoát chế độ chọn.
+  // Nhấn "Bỏ chọn tất cả" thì KHÔNG thoát (nhờ cờ justCleared).
+  useEffect(() => {
+    if (justCleared.current) { justCleared.current = false; return }
+    if (selectModeRef.current && selected.size === 0) {
+      setSelectMode(false); selectModeRef.current = false
+    }
+  }, [selected])
+
   const clear      = useCallback(() => { const s = new Set(); setSelected(s); selectedRef.current = s }, [])
   const toggle     = useCallback(id => applyTo(String(id), !selectedRef.current.has(String(id))), [applyTo])
   const isSelected = useCallback(id => selected.has(String(id)), [selected])
   const consumeClick = useCallback(() => { const s = suppress.current; suppress.current = false; return s }, [])
 
-  return { selectMode, selected, count: selected.size, isSelected, toggle, clear, exit, consumeClick }
+  return { selectMode, selected, count: selected.size, isSelected, toggle, clear, clearStay, exit, consumeClick }
 }

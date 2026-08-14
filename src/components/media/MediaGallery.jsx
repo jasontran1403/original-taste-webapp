@@ -315,7 +315,13 @@ export default function MediaGallery({
           <p className="text-sm">{hasFilter ? 'Không có mục nào khớp bộ lọc' : 'Chưa có tài nguyên nào'}</p>
         </div>
       ) : (
-        <div ref={gridRef} style={{ touchAction: sel.selectMode ? 'none' : 'auto' }}>
+        <div ref={gridRef} className="select-none"
+          onContextMenu={e => e.preventDefault()}
+          style={{
+            touchAction: sel.selectMode ? 'none' : 'auto',
+            WebkitTouchCallout: 'none',
+            WebkitUserSelect: 'none',
+          }}>
         {groups.map(group => (
           <section key={group.key} className="mb-4 media-group">
             <h3 className="py-1.5 text-xs font-bold text-gray-500 uppercase tracking-wider">
@@ -340,6 +346,8 @@ export default function MediaGallery({
                       alt={it.originalName}
                       loading="lazy"
                       decoding="async"
+                      draggable={false}
+                      style={{ WebkitTouchCallout: 'none' }}
                       className={`w-full h-full object-cover transition
                         ${picked ? 'brightness-90 scale-95' : 'group-hover:brightness-90'}`}
                     />
@@ -395,6 +403,7 @@ export default function MediaGallery({
           count={sel.count}
           busy={busy}
           onCancel={sel.exit}
+          onDeselectAll={sel.clearStay}
           onDownload={downloadSelected}
           onDelete={() => sel.count > 0 && setAskDelete(true)}
         />

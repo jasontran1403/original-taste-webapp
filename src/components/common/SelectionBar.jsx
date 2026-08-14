@@ -2,7 +2,7 @@
  * Thanh thao tác khi đang chọn nhiều mục — ghim đáy màn hình, kính mờ.
  * Dùng chung cho trang Hình ảnh và trang Tệp.
  */
-export default function SelectionBar({ count, onDownload, onDelete, onCancel, busy = false }) {
+export default function SelectionBar({ count, onDownload, onDelete, onCancel, onDeselectAll, busy = false }) {
   return (
     <div className="fixed bottom-0 inset-x-0 z-40 bg-white/70 backdrop-blur-2xl
       border-t border-white/50 shadow-[0_-4px_24px_rgba(0,0,0,0.12)]"
@@ -14,9 +14,13 @@ export default function SelectionBar({ count, onDownload, onDelete, onCancel, bu
           Hủy
         </button>
 
-        <span className="text-sm font-semibold text-gray-700 px-1">
-          Đã chọn {count}
-        </span>
+        <div className="flex flex-col leading-tight px-1 min-w-0">
+          <span className="text-sm font-semibold text-gray-700">Đã chọn {count}</span>
+          <button onClick={onDeselectAll} disabled={busy || count === 0}
+            className="text-[11px] text-blue-600 font-semibold text-left hover:underline disabled:text-gray-300 disabled:no-underline">
+            Bỏ chọn tất cả
+          </button>
+        </div>
 
         <div className="ml-auto flex items-center gap-2">
           <button onClick={onDownload} disabled={busy || count === 0}

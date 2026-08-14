@@ -414,8 +414,13 @@ export default function FilesBrowser({ onNotify }) {
             )}
           </div>
         ) : (
-          <div ref={listRef} className="space-y-1.5"
-            style={{ touchAction: sel.selectMode ? 'none' : 'auto' }}>
+          <div ref={listRef} className="space-y-1.5 select-none"
+            onContextMenu={e => e.preventDefault()}
+            style={{
+              touchAction: sel.selectMode ? 'none' : 'auto',
+              WebkitTouchCallout: 'none',
+              WebkitUserSelect: 'none',
+            }}>
             {items.map((item, idx) => (
               <FileRow
                 key={item.id}
@@ -489,6 +494,7 @@ export default function FilesBrowser({ onNotify }) {
           count={sel.count}
           busy={busy}
           onCancel={sel.exit}
+          onDeselectAll={sel.clearStay}
           onDownload={downloadSelected}
           onDelete={() => sel.count > 0 && setAskDelete(true)}
         />
@@ -559,7 +565,7 @@ function FileRow({
                 if (e.key === 'Escape') onCancelRename()
               }}
               className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg border border-blue-300
-                text-sm outline-none focus:border-blue-500"
+                text-sm outline-none focus:border-blue-500 select-text [-webkit-user-select:text]"
             />
             {asset.ext && <span className="text-xs text-gray-400 shrink-0">.{asset.ext}</span>}
             <button onClick={onCommitRename}
