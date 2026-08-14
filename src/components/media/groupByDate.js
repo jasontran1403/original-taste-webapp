@@ -64,15 +64,42 @@ export function groupOf(timestamp, now = Date.now()) {
 }
 
 /**
- * @param items danh sách đã sắp xếp mới nhất trước
+ * Gom theo ĐỘ CHI TIẾT cố định do người dùng chọn (nút Năm/Tháng/Ngày ở dưới).
+ *   • 'year'  → "2026"
+ *   • 'month' → "Tháng 7/2026"
+ *   • 'day'   → "Thứ ba, 29/07/2026"
+ */
+function groupByGranularity(timestamp, gran) {
+  const d = new Date(timestamp)
+  if (gran === 'year') {
+    return { key: `y-${d.getFullYear()}`, label: String(d.getFullYear()) }
+  }
+  if (gran === 'day') {
+    return {
+      key: `d-${startOfDay(d).getTime()}`,
+      label: `${WEEKDAYS[d.getDay()]}, ${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`,
+    }
+  }
+  // month (mặc định)
+  return {
+    key: `m-${d.getFullYear()}-${d.getMonth()}`,
+    label: `Tháng ${d.getMonth() + 1}/${d.getFullYear()}`,
+  }
+}
+
+/**
+ * @param items danh sách đã sắp xếp
+ * @param granularity 'year' | 'month' | 'day' | 'auto'
  * @returns [{ key, label, items: [...] }]
  */
-export function groupByDate(items, now = Date.now()) {
+export function groupByDate(items, now = Date.now(), granularity = 'auto') {
   const groups = []
   let current = null
 
   for (const item of items) {
-    const g = groupOf(item.createdAt, now)
+    const g = granularity === 'auto'
+      ? groupOf(item.createdAt, now)
+      : groupByGranularity(item.createdAt, granularity)
     if (!current || current.key !== g.key) {
       current = { key: g.key, label: g.label, items: [] }
       groups.push(current)

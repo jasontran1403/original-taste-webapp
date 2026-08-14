@@ -3,161 +3,98 @@ import {
   listMedia, deleteMedia, renameMedia, favoriteMedia, mediaUrl,
 } from '../../services/api'
 import MediaLightbox from './MediaLightbox'
-import UploadModal from './UploadModal'
-import DateRangePicker from '../DateRangePicker'
 import { groupByDate } from './groupByDate'
 import { SkeletonTiles } from '../common/Skeleton'
 import { withMinDelay, MIN_LOADING_MS } from '../../lib/timing'
-import { usePinchZoom, ZOOM_LEVELS, snapToLevel, nearestLevelIndex } from '../../hooks/usePinchZoom'
 
 /**
- * Thư viện ảnh/video, bố cục theo đúng ứng dụng Ảnh của iPhone:
+ * Thư viện ảnh/video, bố cục theo ứng dụng Ảnh của iPhone: cũ nhất ở trên, mới
+ * nhất ở góc dưới phải; mở trang cuộn sẵn xuống đáy; cuộn LÊN để tải file cũ hơn.
  *
- *   • File CŨ NHẤT ở trên, MỚI NHẤT ở góc dưới bên phải.
- *   • Mở trang là cuộn sẵn xuống đáy (chỗ file mới nhất).
- *   • Cuộn LÊN để tải thêm file cũ hơn.
+ * SỐ ẢNH TRÊN MỘT DÒNG tự đổi theo tổng số mục (KHÔNG còn zoom bằng tay):
+ *   < 20        → 4 ảnh/dòng (có khoảng cách giữa các ảnh)
+ *   20 – 40     → 8 ảnh/dòng (sát nhau)
+ *   40 – 100    → 16 ảnh/dòng (sát nhau)
+ *   > 100       → 32 ảnh/dòng (sát nhau)
  *
- * Vì thứ tự ngược với thứ tự API trả về (mới nhất trước), dữ liệu được đảo lại
- * khi lưu vào state: `items` luôn ở thứ tự HIỂN THỊ (cũ → mới), trang sau được
- * chèn vào ĐẦU mảng.
- *
- * Số file tải mỗi lần tính theo kích thước màn hình, đủ phủ một màn hình cộng
- * một hàng đệm — điện thoại 3 cột lấy ~15 file, màn hình lớn 8 cột lấy nhiều
- * hơn. Lấy cứng 60 file như trước thì điện thoại tải thừa, còn màn 4K lại thiếu.
+ * Bộ lọc (yêu thích / tìm kiếm / khoảng ngày) và độ chi tiết nhóm (năm/tháng/
+ * ngày) được truyền từ MediaPage xuống qua props.
  */
 
-/** Số cột phải khớp với các breakpoint của lưới bên dưới */
+export const TAB_BAR_HEIGHT = 44
+
+/** Số cột theo breakpoint — chỉ dùng để ƯỚC LƯỢNG cỡ trang tải mỗi lần */
 function columnsFor(width) {
-  if (width < 640)  return 3   // grid-cols-3
-  if (width < 768)  return 4   // sm:grid-cols-4
-  if (width < 1024) return 5   // md:grid-cols-5
-  if (width < 1280) return 6   // lg:grid-cols-6
-  return 8                     // xl:grid-cols-8
+  if (width < 640)  return 3
+  if (width < 768)  return 4
+  if (width < 1024) return 5
+  if (width < 1280) return 6
+  return 8
+}
+
+/** Số ẢNH TRÊN MỘT DÒNG theo tổng số mục */
+function columnsForCount(n) {
+  if (n < 20)  return 4
+  if (n <= 40) return 8
+  if (n <= 100) return 16
+  return 32
 }
 
 function computePageSize() {
   if (typeof window === 'undefined') return 24
   const w = window.innerWidth
   const cols = columnsFor(w)
-
   const horizontalPadding = w < 640 ? 32 : 64
   const gap = w < 640 ? 6 : 8
   const tile = Math.max(60, (w - horizontalPadding - gap * (cols - 1)) / cols)
-
-  // +1 hàng đệm để cuộn nhẹ đã có sẵn nội dung, chưa phải chờ tải
   const rows = Math.ceil(window.innerHeight / (tile + gap)) + 1
-
-  // Backend giới hạn 100/lần
   return Math.min(100, Math.max(12, cols * rows))
 }
 
-/**
- * Thanh công cụ ghim ngay dưới thanh tab, tiêu đề nhóm ngày ghim dưới thanh
- * công cụ. Ba lớp sticky chồng nhau nên các mốc này phải khớp chiều cao thật,
- * lệch một chút là chữ bị che.
- */
-// Khai báo ở đây (không phải ở MediaPage) để tránh import vòng:
-// MediaPage đã import MediaGallery rồi.
-// Thanh tab có thể ẩn khi cuộn → các mốc sticky bên dưới tính theo prop
-// `topOffset` truyền vào (0 khi thanh tab ẩn, TAB_BAR_HEIGHT khi hiện).
-export const TAB_BAR_HEIGHT = 44
-const TOOLBAR_GAP     = 0    // thanh công cụ nằm ngay dưới thanh tab
-const GROUP_LABEL_GAP = 52   // tiêu đề nhóm nằm dưới thanh công cụ
-
-/** Date → 'YYYY-MM-DD' theo giờ máy (toISOString quy về UTC nên lệch ngày) */
-const toDateInput = d => {
-  const pad = n => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-/** Nhớ mức zoom của người dùng giữa các lần mở trang */
-const ZOOM_KEY = 'media:zoomCols'
-
-/**
- * Số cột khởi tạo: lấy mức đã lưu và ép về đúng một MỨC cho phép
- * (1/3/5/15/32); chưa có thì mặc định 5 ảnh/dòng.
- */
-function initialColumns() {
-  const saved = parseInt(localStorage.getItem(ZOOM_KEY) || '', 10)
-  if (!Number.isNaN(saved)) return snapToLevel(saved)
-  return 5
-}
-
-/**
- * Bề rộng THẬT (CSS px) của một ô theo số cột hiện tại. Phải khớp lề + gap của
- * grid: lề = px-4/sm:px-6/lg:px-8 (32/48/64 tổng hai bên), gap = 6/8.
- */
+/** Bề rộng THẬT (CSS px) của một ô theo số cột — để biết khi nào cần ảnh gốc */
 function tileWidthFor(cols) {
   if (typeof window === 'undefined') return 120
   const w = window.innerWidth
   const pad = w < 640 ? 32 : w < 1024 ? 48 : 64
-  const gap = w < 640 ? 6 : 8
+  const gap = cols === 4 ? (w < 640 ? 6 : 8) : 0
   return Math.max(0, (w - pad - gap * (cols - 1)) / cols)
 }
 
-/**
- * Ô rộng hơn ngưỡng này thì thumbnail nhỏ bị kéo giãn mờ → dùng luôn ảnh gốc
- * cho nét. Ngưỡng đặt theo CSS px (không nhân devicePixelRatio) để không kéo
- * ảnh gốc quá sớm ở mức zoom thường, chỉ nét khi thật sự phóng to.
- */
+/** Ô rộng hơn ngưỡng này thì thumbnail bị mờ → dùng ảnh gốc cho nét */
 const SHARP_TILE_PX = 190
 
-export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR_HEIGHT }) {
+/** Date → 'YYYY-MM-DD' theo giờ máy */
+export const toDateInput = d => {
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+export default function MediaGallery({
+  refreshKey, onNotify,
+  onlyFav = false, search = '', dateOn = false, from = '', to = '',
+  granularity = 'month',
+}) {
   const [items, setItems]      = useState([])   // thứ tự HIỂN THỊ: cũ → mới
   const [page, setPage]        = useState(0)
   const [totalPages, setTotal] = useState(0)
   const [totalCount, setCount] = useState(0)
-  const [loading, setLoading]  = useState(true)    // tải lần đầu / đổi bộ lọc
-  const [prepending, setPrepend] = useState(false) // đang chèn thêm file cũ ở ĐẦU
-  const [showUpload, setUpload] = useState(false)
+  const [loading, setLoading]  = useState(true)
+  const [prepending, setPrepend] = useState(false)
   const [lightbox, setLightbox] = useState(null)
-  const [showFilters, setShowFilters] = useState(false)
-
-  // Bộ lọc
-  const [onlyFav, setOnlyFav] = useState(false)
-  const [search, setSearch]   = useState('')
-  const [query, setQuery]     = useState('')
-  const [dateOn, setDateOn]   = useState(false)
-  const [from, setFrom]       = useState('')
-  const [to, setTo]           = useState('')
-
-  // Vị trí sticky của thanh công cụ + tiêu đề nhóm, dời theo trạng thái thanh tab
-  const toolbarTop    = topOffset + TOOLBAR_GAP
-  const groupLabelTop = topOffset + GROUP_LABEL_GAP
-
-  // ── Zoom lưới ảnh (kiểu iPhone) — nhảy theo mức 1/3/5/15/32 ─────
-  const [columns, setColumns] = useState(initialColumns)
-  const [tilePx, setTilePx]   = useState(() => tileWidthFor(initialColumns()))
-  const columnsRef = useRef(columns)
-  const levelsRef  = useRef(ZOOM_LEVELS)
-  const zoomRef    = useRef(null)            // phần tử bao lưới để bắt cử chỉ
-
-  const levelIdx   = nearestLevelIndex(columns)
-  const canZoomIn  = levelIdx > 0                         // ít cột hơn = ô to hơn
-  const canZoomOut = levelIdx < ZOOM_LEVELS.length - 1
-  const zoomIn  = () => setColumns(ZOOM_LEVELS[Math.max(0, nearestLevelIndex(columns) - 1)])
-  const zoomOut = () => setColumns(ZOOM_LEVELS[Math.min(ZOOM_LEVELS.length - 1, nearestLevelIndex(columns) + 1)])
-
-  // Ô đủ to thì thumbnail bị mờ → dùng ảnh gốc cho nét (chỉ với ẢNH; video giữ
-  // thumbnail vì it.url là file video, không phải ảnh)
-  const sharp = tilePx >= SHARP_TILE_PX
-
-  // Đồng bộ ref + ghi nhớ mức zoom + cập nhật bề rộng ô mỗi khi đổi
-  useEffect(() => {
-    columnsRef.current = columns
-    setTilePx(tileWidthFor(columns))
-    try { localStorage.setItem(ZOOM_KEY, String(columns)) } catch { /* bỏ qua */ }
-  }, [columns])
-
-  usePinchZoom(zoomRef, { columnsRef, levelsRef, setColumns })
+  const [query, setQuery]      = useState('')
 
   const searchRef   = useRef(null)
   const pageSizeRef = useRef(computePageSize())
-  const loadingRef  = useRef(false)          // chặn gọi trùng khi cuộn nhanh
-  const pendingScroll = useRef(null)         // 'bottom' | { prevHeight }
-  // Số phần tử vừa chèn vào ĐẦU mảng — chỉ những phần tử này chạy animation,
-  // không thì cả lưới nhấp nháy lại sau mỗi lần tải thêm
-  const freshCount = useRef(0)
+  const loadingRef  = useRef(false)
+  const pendingScroll = useRef(null)
+  const freshCount  = useRef(0)
+  const lightboxOpenRef = useRef(false)
+  lightboxOpenRef.current = lightbox !== null   // luôn cập nhật cho handler cuộn
+
+  // Số ảnh/dòng theo tổng số mục + có khoảng cách hay không
+  const columns = columnsForCount(totalCount)
+  const gapped  = columns === 4                 // chỉ 4 ảnh/dòng mới chừa khoảng cách
+  const sharp   = tileWidthFor(columns) >= SHARP_TILE_PX
 
   // Gõ tới đâu gọi API tới đó thì vừa giật vừa tốn request → chờ 400ms
   useEffect(() => {
@@ -166,12 +103,8 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
     return () => clearTimeout(searchRef.current)
   }, [search])
 
-  // Xoay ngang/dọc hoặc đổi cỡ cửa sổ → tính lại cỡ trang + bề rộng ô
   useEffect(() => {
-    const onResize = () => {
-      pageSizeRef.current = computePageSize()
-      setTilePx(tileWidthFor(columnsRef.current))
-    }
+    const onResize = () => { pageSizeRef.current = computePageSize() }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -179,41 +112,28 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
   const buildFilters = () => ({
     favorite: onlyFav,
     q: query,
-    // 'to' phải lấy hết 23:59:59, không thì chọn cùng một ngày cho cả hai đầu
-    // sẽ không ra kết quả nào
     from: dateOn && from ? new Date(from + 'T00:00:00').getTime() : null,
     to:   dateOn && to   ? new Date(to   + 'T23:59:59').getTime() : null,
   })
 
-  /**
-   * @param targetPage 0 = mới nhất
-   * @param prepend true = chèn file cũ hơn vào đầu danh sách
-   */
   const load = useCallback(async (targetPage, prepend) => {
     if (loadingRef.current) return
     loadingRef.current = true
     prepend ? setPrepend(true) : setLoading(true)
 
-    // Ghi lại chiều cao trang TRƯỚC khi chèn, để giữ nguyên vị trí đang xem
     pendingScroll.current = prepend
       ? { prevHeight: document.documentElement.scrollHeight }
       : 'bottom'
 
     try {
       const request = listMedia(targetPage, pageSizeRef.current, buildFilters())
-
-      // Khi tải thêm, ép dòng "Đang tải thêm" hiện đủ 600ms. Mạng nhanh thì nó
-      // chớp lên rồi tắt trong 40ms, lưới tự dài ra mà không rõ vì sao. Chờ
-      // SONG SONG với request nên mạng chậm không tốn thêm giây nào.
       const res = prepend ? await withMinDelay(request, MIN_LOADING_MS) : await request
       const env = res.data
       if (env && typeof env.code === 'number' && !(env.code >= 900 && env.code < 1000)) {
         throw new Error(env.message)
       }
       const d = env?.data ?? env
-
-      // API trả mới → cũ; đảo lại thành cũ → mới cho đúng thứ tự hiển thị
-      const batch = [...(d.content || [])].reverse()
+      const batch = [...(d.content || [])].reverse()   // API mới→cũ, đảo thành cũ→mới
 
       freshCount.current = prepend ? batch.length : 0
       setItems(prev => prepend ? [...batch, ...prev] : batch)
@@ -236,18 +156,11 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
     load(0, false)
   }, [refreshKey, onlyFav, query, dateOn, from, to])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  /**
-   * Sau khi DOM cập nhật:
-   *  • Tải lần đầu / đổi lọc → nhảy xuống đáy (chỗ file mới nhất).
-   *  • Chèn file cũ ở đầu   → bù lại scrollTop đúng bằng phần chiều cao vừa
-   *    thêm vào, nếu không màn hình sẽ nhảy vọt và mất chỗ đang xem.
-   * Dùng useLayoutEffect để chỉnh trước khi trình duyệt vẽ, không thấy giật.
-   */
+  // Sau khi DOM đổi: lần đầu/đổi lọc → xuống đáy; chèn ở đầu → bù scrollTop
   useLayoutEffect(() => {
     const action = pendingScroll.current
     if (!action) return
     pendingScroll.current = null
-
     if (action === 'bottom') {
       window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' })
     } else {
@@ -256,11 +169,16 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
     }
   }, [items])
 
-  // Cuộn gần lên đỉnh → tải thêm file cũ hơn
+  // Cuộn gần lên đỉnh → tải thêm file cũ hơn.
+  // QUAN TRỌNG: khi lightbox đang mở, KHÔNG tải thêm. Lúc mở lightbox, nền bị
+  // khoá bằng position:fixed khiến scrollY về 0 và bắn sự kiện scroll — nếu
+  // không chặn thì đây sẽ prepend một lô ảnh cũ vào đầu, làm lệch chỉ số ảnh
+  // đang xem (đang xem tấm cuối tự nhảy về tấm khác).
   useEffect(() => {
     const onScroll = () => {
+      if (lightboxOpenRef.current) return
       if (loadingRef.current) return
-      if (page >= totalPages - 1) return          // hết dữ liệu
+      if (page >= totalPages - 1) return
       if (window.scrollY < 400) load(page + 1, true)
     }
     window.addEventListener('scroll', onScroll, { passive: true })
@@ -298,7 +216,6 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
 
   const handleFavorite = async asset => {
     const next = !asset.favorite
-    // Cập nhật lạc quan để bấm tim không khựng; hỏng thì trả lại trạng thái cũ
     setItems(prev => prev.map(i => i.id === asset.id ? { ...i, favorite: next } : i))
     try {
       await favoriteMedia(asset.id, next)
@@ -312,58 +229,27 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
     }
   }
 
-  /** Bật lọc ngày → mặc định 30 ngày gần nhất, TÍNH CẢ HÔM NAY */
-  const toggleDateFilter = () => {
-    if (dateOn) { setDateOn(false); return }
-    if (!from || !to) {
-      const today = new Date()
-      const start = new Date(today)
-      start.setDate(start.getDate() - 29)   // 29 vì hôm nay đã là ngày thứ 30
-      setFrom(toDateInput(start))
-      setTo(toDateInput(today))
-    }
-    setDateOn(true)
-  }
-
-  const clearFilters = () => {
-    setOnlyFav(false); setSearch(''); setQuery('')
-    setDateOn(false); setFrom(''); setTo('')
-  }
-
   const hasFilter = onlyFav || query || dateOn
   const hasMore = page < totalPages - 1
-  const groups = groupByDate(items)   // items đã ở thứ tự cũ → mới
-
-  // Lô vừa chèn nằm ở ĐẦU mảng. Dựng sẵn Set id để trong vòng lặp render chỉ
-  // phải tra một lần, thay vì indexOf trên mảng vài trăm phần tử cho mỗi ô.
+  const groups = groupByDate(items, Date.now(), granularity)
   const freshIds = new Set(items.slice(0, freshCount.current).map(i => i.id))
 
-  // ── Render ──────────────────────────────────────────────────────
+  const showHeart = columns <= 4     // ô đủ to mới hiện nút tim / nhãn WM
+  const showPlay  = columns <= 8     // ô quá nhỏ thì bỏ luôn dấu ▶
 
   return (
     <>
-      {/*
-        Keyframes đặt ngay tại đây để component tự chứa, khỏi phải nhớ sửa
-        index.css. Độ trễ theo vị trí tạo cảm giác lưới "chạy" vào, nhưng chặn
-        ở 12 ô — ô thứ 60 mà trễ 60×18ms thì người dùng tưởng lỗi tải.
-      */}
       <style>{`
         @keyframes mediaIn {
           from { opacity: 0; transform: scale(.94) translateY(6px); }
           to   { opacity: 1; transform: none; }
         }
-        @keyframes groupIn {
-          from { opacity: 0; transform: translateY(-4px); }
-          to   { opacity: 1; transform: none; }
-        }
-        /*
-          File cũ được nối vào ĐẦU danh sách nên animation phải đi từ TRÊN
-          xuống — ngược với trang Tệp (nối vào đáy, trượt từ dưới lên). Hai
-          hướng khác nhau vì thứ tự sắp xếp của hai trang ngược nhau; dùng
-          chung một hướng sẽ thấy sai chiều với nhịp cuộn.
-        */
         @keyframes mediaInTop {
           from { opacity: 0; transform: translateY(-14px) scale(.96); }
+          to   { opacity: 1; transform: none; }
+        }
+        @keyframes groupIn {
+          from { opacity: 0; transform: translateY(-4px); }
           to   { opacity: 1; transform: none; }
         }
         .media-tile  { animation: mediaIn .26s cubic-bezier(.2,.8,.3,1) both; }
@@ -374,112 +260,12 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
         }
       `}</style>
 
-      {/*
-        Thanh công cụ ghim ngay dưới thanh tab (44px). Trên điện thoại 3 nút
-        thu về icon để một dòng chứa đủ; màn hình rộng mới hiện thêm chữ.
-      */}
-      <div className="sticky z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-2
-        bg-gray-50/95 backdrop-blur border-b border-gray-200"
-        style={{ top: toolbarTop, transition: 'top .3s ease' }}>
-
-        <div className="flex items-center gap-2">
-          <button onClick={() => setUpload(true)} title="Tải lên"
-            className="h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-semibold
-              flex items-center gap-1.5 active:scale-95 transition">
-            <span className="text-base leading-none">＋</span>
-            <span className="hidden sm:inline">Tải lên</span>
-          </button>
-
-          <button onClick={() => setOnlyFav(f => !f)} title="Yêu thích"
-            className={`h-9 px-3 rounded-lg text-sm font-semibold border flex items-center gap-1.5
-              active:scale-95 transition-colors
-              ${onlyFav ? 'bg-rose-50 border-rose-200 text-rose-600' : 'bg-white border-gray-200 text-gray-500'}`}>
-            <span className="text-base leading-none">{onlyFav ? '❤️' : '🤍'}</span>
-            <span className="hidden sm:inline">Yêu thích</span>
-          </button>
-
-          <button onClick={() => setShowFilters(v => !v)} title="Tìm kiếm"
-            className={`h-9 px-3 rounded-lg text-sm font-semibold border flex items-center gap-1.5
-              active:scale-95 transition-colors
-              ${showFilters || dateOn || query ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-500'}`}>
-            <span className="text-base leading-none">🔍</span>
-            <span className="hidden sm:inline">Tìm kiếm</span>
-          </button>
-
-          <div className="ml-auto flex items-center gap-2 shrink-0">
-            {/*
-              Nút zoom chỉ hiện trên màn hình lớn (sm trở lên): desktop/laptop
-              không pinch được nên cần nút + Ctrl-lăn. Trên MOBILE ẩn hẳn nút,
-              chỉ zoom bằng chụm/xòe 2 ngón như iPhone.
-            */}
-            <div className="hidden sm:flex items-center rounded-lg border border-gray-200 bg-white overflow-hidden"
-              title="Phóng to / thu nhỏ ảnh — hoặc giữ Ctrl và lăn chuột">
-              <button onClick={zoomOut} disabled={!canZoomOut} aria-label="Thu nhỏ"
-                className="w-8 h-9 flex items-center justify-center text-gray-600
-                  disabled:text-gray-300 hover:bg-gray-50 active:scale-95 transition">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                  <circle cx="11" cy="11" r="7" /><line x1="16.5" y1="16.5" x2="21" y2="21" /><line x1="8" y1="11" x2="14" y2="11" />
-                </svg>
-              </button>
-              <div className="w-px h-5 bg-gray-200" />
-              <button onClick={zoomIn} disabled={!canZoomIn} aria-label="Phóng to"
-                className="w-8 h-9 flex items-center justify-center text-gray-600
-                  disabled:text-gray-300 hover:bg-gray-50 active:scale-95 transition">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                  <circle cx="11" cy="11" r="7" /><line x1="16.5" y1="16.5" x2="21" y2="21" /><line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
-                </svg>
-              </button>
-            </div>
-            <span className="text-xs sm:text-sm text-gray-400">{totalCount} mục</span>
-          </div>
-        </div>
-
-        {/* Bảng tìm kiếm — mở bằng nút 🔍, gộp cả tìm theo tên và theo ngày */}
-        {showFilters && (
-          <div className="mt-2 flex flex-col sm:flex-row sm:items-center gap-2">
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Tìm theo tên file..."
-              className="flex-1 min-w-0 px-3.5 py-2 bg-white border border-gray-200 rounded-lg text-sm
-                outline-none focus:border-blue-400 transition-colors placeholder:text-gray-300"
-            />
-
-            <div className="flex items-center gap-2">
-              <button onClick={toggleDateFilter}
-                className={`h-9 px-3 rounded-lg text-sm font-semibold border shrink-0 transition-colors
-                  ${dateOn ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-200 text-gray-500'}`}>
-                🗓 Theo ngày
-              </button>
-
-              {dateOn && (
-                <DateRangePicker fromDate={from} toDate={to}
-                  onChange={(f, t) => { setFrom(f); setTo(t) }} />
-              )}
-            </div>
-          </div>
-        )}
-
-        {hasFilter && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
-            <span>Đang lọc</span>
-            <button onClick={clearFilters} className="text-blue-600 font-semibold hover:underline">
-              Bỏ tất cả bộ lọc
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/*
-        Báo còn file cũ hơn — đặt ở TRÊN CÙNG vì trang này sắp cũ → mới và
-        cuộn LÊN mới tải thêm. Trang Tệp thì ngược lại, chỉ báo ở đáy.
-      */}
+      {/* Báo còn file cũ hơn — ở TRÊN vì trang sắp cũ→mới, cuộn LÊN mới tải thêm */}
       {hasMore && !loading && (
         <div className="py-3 text-center">
           {prepending ? (
             <span className="inline-flex items-center gap-2 text-xs text-gray-400">
-              <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-200
-                border-t-blue-500 animate-spin" />
+              <span className="w-3.5 h-3.5 rounded-full border-2 border-gray-200 border-t-blue-500 animate-spin" />
               Đang tải thêm...
             </span>
           ) : (
@@ -489,31 +275,27 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
       )}
 
       {loading ? (
-        <div className="pt-3">
-          <SkeletonTiles count={24} />
-        </div>
+        <div className="pt-3"><SkeletonTiles count={24} /></div>
       ) : items.length === 0 ? (
         <div className="py-20 text-center text-gray-300">
           <div className="text-5xl mb-3">{hasFilter ? '🔍' : '🖼️'}</div>
           <p className="text-sm">{hasFilter ? 'Không có mục nào khớp bộ lọc' : 'Chưa có tài nguyên nào'}</p>
         </div>
       ) : (
-        <div ref={zoomRef} style={{ touchAction: 'pan-y' }}>
-        {groups.map(group => (
-          <section key={group.key} className="mb-5 media-group">
-            {/* Tiêu đề dính — cuộn tới đâu thấy mốc thời gian tới đó */}
-            <h3 className="sticky z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-1.5
-              bg-gray-50/95 backdrop-blur text-xs font-bold text-gray-500 uppercase tracking-wider"
-              style={{ top: groupLabelTop, transition: 'top .3s ease' }}>
+        groups.map(group => (
+          <section key={group.key} className="mb-4 media-group">
+            <h3 className="sticky top-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-1.5
+              bg-gray-50/95 backdrop-blur text-xs font-bold text-gray-500 uppercase tracking-wider">
               {group.label}
               <span className="ml-2 font-normal text-gray-300 normal-case">{group.items.length}</span>
             </h3>
 
-            <div className="grid gap-1.5 sm:gap-2 mt-2"
+            <div className={`grid mt-2 ${gapped ? 'gap-1.5 sm:gap-2' : 'gap-0'}`}
               style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
               {group.items.map((it, idx) => (
                 <div key={it.id}
-                  className={`relative aspect-square rounded-lg overflow-hidden bg-gray-100 group
+                  className={`relative aspect-square overflow-hidden bg-gray-100 group
+                    ${gapped ? 'rounded-lg' : 'rounded-none'}
                     ${freshIds.has(it.id) ? 'media-tile-new' : 'media-tile'}`}
                   style={{ animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
 
@@ -528,22 +310,23 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
                     />
                   </button>
 
-                  {it.mediaType === 'VIDEO' && (
+                  {it.mediaType === 'VIDEO' && showPlay && (
                     <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <span className="w-8 h-8 rounded-full bg-black/50 text-white text-xs flex items-center justify-center">
-                        ▶
-                      </span>
+                      <span className={`rounded-full bg-black/50 text-white flex items-center justify-center
+                        ${columns <= 4 ? 'w-8 h-8 text-xs' : 'w-5 h-5 text-[8px]'}`}>▶</span>
                     </span>
                   )}
 
-                  <button onClick={() => handleFavorite(it)}
-                    aria-label={it.favorite ? 'Bỏ yêu thích' : 'Yêu thích'}
-                    className="absolute bottom-1 right-1 w-7 h-7 rounded-full bg-black/35 backdrop-blur-sm
-                      flex items-center justify-center text-xs active:scale-90 transition">
-                    {it.favorite ? '❤️' : '🤍'}
-                  </button>
+                  {showHeart && (
+                    <button onClick={() => handleFavorite(it)}
+                      aria-label={it.favorite ? 'Bỏ yêu thích' : 'Yêu thích'}
+                      className="absolute bottom-1 right-1 w-7 h-7 rounded-full bg-black/35 backdrop-blur-sm
+                        flex items-center justify-center text-xs active:scale-90 transition">
+                      {it.favorite ? '❤️' : '🤍'}
+                    </button>
+                  )}
 
-                  {it.source === 'WATERMARK' && (
+                  {it.source === 'WATERMARK' && showHeart && (
                     <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-blue-600/90 text-white text-[9px] font-bold pointer-events-none">
                       WM
                     </span>
@@ -552,16 +335,7 @@ export default function MediaGallery({ refreshKey, onNotify, topOffset = TAB_BAR
               ))}
             </div>
           </section>
-        ))}
-        </div>
-      )}
-
-      {showUpload && (
-        <UploadModal
-          onClose={() => setUpload(false)}
-          onDone={() => load(0, false)}
-          onNotify={onNotify}
-        />
+        ))
       )}
 
       {lightbox !== null && items[lightbox] && (
