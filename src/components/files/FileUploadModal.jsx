@@ -22,6 +22,7 @@ export default function FileUploadModal({ onClose, onDone, onNotify }) {
   const [entries, setEntries] = useState([])
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [uploadStats, setUploadStats] = useState(null) // { doneCount, totalCount, bytesSent, bytesTotal, speed, eta }
 
   const inputRef = useRef(null)
   const abortRef = useRef(null)
@@ -116,36 +117,59 @@ export default function FileUploadModal({ onClose, onDone, onNotify }) {
 
     let ok = 0, fail = 0
     let cursor = 0
+    const totalCount = queue.length
+    const bytesTotal = queue.reduce((s, e) => s + e.file.size, 0)
+    const startTime = Date.now()
+    // Track progress per entry for concurrent workers
+    const progressMap = {}
+
+    const updateStats = () => {
+      const now = Date.now()
+      const elapsed = (now - startTime) / 1000
+      let bytesSent = 0
+      for (const entry of queue) {
+        const p = progressMap[entry.id] || 0
+        bytesSent += (p / 100) * entry.file.size
+      }
+      const speed = elapsed > 0.5 ? bytesSent / elapsed : 0
+      const bytesRemaining = bytesTotal - bytesSent
+      const eta = speed > 0 ? bytesRemaining / speed : 0
+      setUploadStats({ doneCount: ok + fail, totalCount, bytesSent, bytesTotal, speed, eta })
+    }
 
     /** Một luồng: lấy tệp kế tiếp trong hàng đợi cho tới khi hết */
     const worker = async () => {
       while (cursor < queue.length) {
         const entry = queue[cursor++]
+        progressMap[entry.id] = 0
         patch(entry.id, { status: 'uploading', progress: 0, error: null })
+        updateStats()
 
         try {
           const saved = await uploadFile(
             entry.file,
             entry.name?.trim() || '',
-            p => patch(entry.id, { progress: p }),
+            p => { progressMap[entry.id] = p; patch(entry.id, { progress: p }); updateStats() },
             signal
           )
+          progressMap[entry.id] = 100
           patch(entry.id, {
             status: 'done', progress: 100,
             finalName: saved?.originalName || entry.finalName,
-            // Tên lúc lưu thật có thể khác lúc kiểm tra, nếu trong lúc chờ có
-            // người khác tải lên đúng tên đó
             renamed: saved?.originalName
               && saved.originalName !== `${entry.name}${entry.ext ? '.' + entry.ext : ''}`,
           })
           ok++
+          updateStats()
         } catch (err) {
           if (signal.aborted) return
+          progressMap[entry.id] = 100  // count errored file
           patch(entry.id, {
             status: 'error',
             error: err.response?.data?.message || err.message || 'Lỗi không xác định',
           })
           fail++
+          updateStats()
         }
       }
     }
@@ -153,6 +177,7 @@ export default function FileUploadModal({ onClose, onDone, onNotify }) {
     await Promise.all(Array.from({ length: CONCURRENCY }, worker))
 
     setBusy(false)
+    setUploadStats(null)
     abortRef.current = null
 
     if (signal.aborted) return
@@ -205,6 +230,28 @@ export default function FileUploadModal({ onClose, onDone, onNotify }) {
             flex items-start gap-2 text-xs text-amber-800">
             <span className="shrink-0">⚠️</span>
             <span>Có tệp trùng tên với tệp đã lưu. Tên sẽ được thêm hậu tố để không ghi đè lên nhau.</span>
+          </div>
+        )}
+
+        {/* ── Thanh thống kê khi đang upload ── */}
+        {uploadStats && (
+          <div className="shrink-0 px-5 py-3 border-b border-gray-100 bg-blue-50/60">
+            <div className="h-2 bg-gray-200 rounded-full overflow-hidden mb-2.5">
+              <div className="h-full bg-blue-600 transition-all duration-300 rounded-full"
+                style={{ width: `${uploadStats.bytesTotal > 0 ? Math.min(100, (uploadStats.bytesSent / uploadStats.bytesTotal) * 100) : 0}%` }} />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+              <span>
+                <span className="font-semibold text-gray-800">{uploadStats.doneCount}</span>
+                <span className="text-gray-400">/{uploadStats.totalCount}</span> tệp
+              </span>
+              <span>
+                <span className="font-semibold text-gray-800">{fmtSizeAuto(uploadStats.bytesSent)}</span>
+                <span className="text-gray-400">/{fmtSizeAuto(uploadStats.bytesTotal)}</span>
+              </span>
+              <span title="Tốc độ">⚡ {fmtSizeAuto(uploadStats.speed)}/s</span>
+              <span title="Còn lại">⏱ {fmtDurationEta(uploadStats.eta)}</span>
+            </div>
           </div>
         )}
 
@@ -348,4 +395,27 @@ function EntryRow({ entry, busy, onChangeName, onRemove }) {
       </div>
     </div>
   )
+}
+
+/* ── Helpers cho thanh thống kê upload ─────────────────────────────── */
+
+function fmtSizeAuto(bytes) {
+  if (bytes == null || bytes < 0) return '0 B'
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 ** 3)).toFixed(2)} GB`
+}
+
+function fmtDurationEta(seconds) {
+  if (!seconds || seconds <= 0 || !isFinite(seconds)) return '—'
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60)
+    const s = Math.ceil(seconds % 60)
+    return `${m}m ${s}s`
+  }
+  const h = Math.floor(seconds / 3600)
+  const m = Math.ceil((seconds % 3600) / 60)
+  return `${h}h ${m}m`
 }

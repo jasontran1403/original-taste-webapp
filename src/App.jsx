@@ -14,8 +14,6 @@ import OrderNotFound from './components/OrderNotFound'
 import QrPage from './pages/tools/QrPage'
 import ESignPage from './pages/accountant/ESignPage'
 import MediaPage from './pages/tools/MediaPage'
-import ToolsLoginPage from './pages/tools/ToolsLoginPage'
-import ToolsProtected from './components/tools/ToolsProtected'
 
 /** Chỉ ACCOUNTANT / SUPERADMIN — khu vực kế toán */
 function Protected({ children }) {
@@ -52,22 +50,14 @@ export default function App() {
 
         {/*
           ── Tiện ích nội bộ (/tools) ──
-          YÊU CẦU ĐĂNG NHẬP. Vào bất kỳ trang /tools/** nào mà chưa đăng nhập
-          (hoặc phiên đã hết hạn) đều bị đá sang /tools/login. Hai tài khoản
-          được phép nằm cứng trong services/toolsAuth.js, KHÔNG dùng bảng users.
+          KHÔNG CÒN YÊU CẦU ĐĂNG NHẬP — truy cập trực tiếp.
 
-          /tools           — thư viện tài nguyên: Hình ảnh · Tệp · Office · Watermark
-                             (trước đây là /tools/watermark)
+          /tools           — thư viện tài nguyên: Hình ảnh · Tệp · Office · Watermark · Todo
           /tools/qr        — tạo mã QR
-          /tools/login     — màn hình đăng nhập (công khai)
-
-          Lưu ý: đây là cổng chặn GIAO DIỆN. Các API /api/tools/** phía backend
-          vẫn công khai như thiết kế cũ (xem SecurityConfiguration). Ký số PDF
-          đã nằm trong khu Kế toán (/accountant/sign).
         */}
-        <Route path="/tools/login" element={<ToolsLoginPage />} />
-        <Route path="/tools"       element={<ToolsProtected><MediaPage /></ToolsProtected>} />
-        <Route path="/tools/qr"    element={<ToolsProtected><QrPage /></ToolsProtected>} />
+        <Route path="/tools/login" element={<Navigate to="/tools" replace />} />
+        <Route path="/tools"       element={<MediaPage />} />
+        <Route path="/tools/qr"    element={<QrPage />} />
 
         {/* Link cũ /tools/watermark → /tools, giữ để bookmark/QR cũ không chết */}
         <Route path="/tools/watermark" element={<Navigate to="/tools" replace />} />

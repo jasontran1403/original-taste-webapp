@@ -428,3 +428,22 @@ export const downloadFile = async (url, filename) => {
   a.remove()
   setTimeout(() => URL.revokeObjectURL(objectUrl), 10000)
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Todo
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const listTodos = (page = 0, size = 100, filters = {}) => {
+  const params = { page, size }
+  if (filters.status) params.status = filters.status
+  if (filters.creator) params.creator = filters.creator
+  if (filters.q) params.q = filters.q
+  if (filters.from) params.from = filters.from
+  if (filters.to) params.to = filters.to
+  return api.get('/api/tools/todo', { params })
+}
+
+export const createTodo = data => api.post('/api/tools/todo', data)
+export const updateTodo = (id, data) => api.patch(`/api/tools/todo/${id}`, data)
+export const updateTodoStatus = (id, status) => api.patch(`/api/tools/todo/${id}/status`, { status })
+export const deleteTodo = id => api.delete(`/api/tools/todo/${id}`)

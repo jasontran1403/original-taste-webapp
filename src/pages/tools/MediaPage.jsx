@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { useToolsAuth } from '../../hooks/useToolsAuth'
 import MediaGallery, { TAB_BAR_HEIGHT, toDateInput } from '../../components/media/MediaGallery'
 import UploadModal from '../../components/media/UploadModal'
 import DateRangePicker from '../../components/DateRangePicker'
 import FilesBrowser from '../../components/files/FilesBrowser'
 import OfficeWorkspace from '../../components/office/OfficeWorkspace'
 import WatermarkEditor from '../../components/media/WatermarkEditor'
+import TodoBoard from '../../components/todo/TodoBoard'
 import { SkeletonStyles } from '../../components/common/Skeleton'
 
 /**
@@ -22,9 +21,10 @@ const TABS = [
   { key: 'files',     icon: '📁', label: 'Tệp' },
   { key: 'office',    icon: '📊', label: 'Office' },
   { key: 'watermark', icon: '💧', label: 'Watermark' },
+  { key: 'todo',      icon: '✅', label: 'Todo' },
 ]
 
-const FULL_BLEED = new Set(['office', 'watermark'])
+const FULL_BLEED = new Set(['office', 'watermark', 'todo'])
 
 const GRANS = [
   { key: 'year',  label: 'Năm' },
@@ -45,9 +45,6 @@ export default function MediaPage() {
   const [tab, setTab] = useState('library')
   const [refreshKey, setRefresh] = useState(0)
   const [toast, setToast] = useState(null)
-
-  const { auth, logout } = useToolsAuth()
-  const navigate = useNavigate()
 
   // Bộ điều khiển thư viện
   const [showUpload, setUpload]     = useState(false)
@@ -78,11 +75,6 @@ export default function MediaPage() {
   }, [])
 
   useEffect(() => { setNavHidden(false) }, [tab])
-
-  const handleLogout = () => {
-    logout()
-    navigate('/tools/login', { replace: true })
-  }
 
   const notify = (msg, ok = true) => {
     setToast({ msg, ok })
@@ -163,18 +155,7 @@ export default function MediaPage() {
             </button>
           ))}
 
-          <div className="ml-auto flex items-center gap-2 shrink-0 pl-2">
-            {auth?.username && (
-              <span className="hidden sm:inline text-xs text-gray-500">👤 {auth.username}</span>
-            )}
-            <button onClick={handleLogout} title="Đăng xuất"
-              className="flex items-center gap-1 px-2.5 h-8 rounded-lg text-xs font-semibold
-                text-gray-500 border border-white/50 bg-white/40 backdrop-blur hover:text-red-600 hover:border-red-200
-                active:scale-95 transition-colors">
-              <span className="text-sm leading-none">⎋</span>
-              <span className="hidden sm:inline">Đăng xuất</span>
-            </button>
-          </div>
+          <div className="ml-auto shrink-0 pl-2" />
         </div>
 
         {/* Dòng 2 — 3 nút chức năng, FULL WIDTH, kính mờ (chỉ tab Hình ảnh) */}
@@ -249,6 +230,11 @@ export default function MediaPage() {
         {tab === 'watermark' && (
           <div className="pt-3">
             <WatermarkEditor onSaved={handleSaved} onNotify={notify} />
+          </div>
+        )}
+        {tab === 'todo' && (
+          <div className="pt-3">
+            <TodoBoard onNotify={notify} />
           </div>
         )}
       </div>

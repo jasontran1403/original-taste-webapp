@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { fetchWatermarkLogo, watermarkAndSave } from '../../services/api'
+import { fetchWatermarkLogo, watermarkAndSave, listMedia, mediaUrl } from '../../services/api'
 
 /**
  * Gắn watermark lên ảnh hoặc video — TỰ NHẬN DIỆN loại file, không chia 2 tab.
@@ -285,6 +285,34 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
     }
   }
 
+  // ── Chọn từ thư viện ──────────────────────────────────────────
+  const [showMediaPicker, setMediaPicker] = useState(false)
+
+  const pickFromLibrary = async (asset) => {
+    setMediaPicker(false)
+    // Fetch the file from server as a blob, then create a File from it
+    try {
+      const url = mediaUrl(asset.url)
+      const res = await fetch(url)
+      if (!res.ok) throw new Error('Fetch failed')
+      const blob = await res.blob()
+      const f = new File([blob], asset.originalName || 'file', { type: blob.type || asset.contentType })
+
+      const byMime = f.type.startsWith('video/') ? 'video'
+        : f.type.startsWith('image/') ? 'image' : null
+      const byExt = /\.(mp4|mov|m4v|avi|mkv|webm)$/i.test(f.name) ? 'video'
+        : /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(f.name) ? 'image' : null
+      const detected = byMime || byExt || 'image'
+
+      reset()
+      setKind(detected)
+      setFile(f)
+      setUrl(URL.createObjectURL(f))
+    } catch (e) {
+      setError('Không tải được file từ thư viện: ' + (e.message || ''))
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────
   return (
     <>
@@ -295,18 +323,32 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
       )}
 
       {!file ? (
-        <div className="max-w-2xl mx-auto pt-4 sm:pt-8">
+        <div className="max-w-2xl mx-auto pt-4 sm:pt-8 space-y-3">
           <button
             onClick={() => inputRef.current?.click()}
             className="w-full card border-2 border-dashed border-gray-200 py-14 text-center hover:border-blue-400 transition-colors"
           >
             <div className="text-4xl mb-3">📁</div>
-            <p className="font-semibold text-gray-700 text-sm">Chọn ảnh hoặc video</p>
+            <p className="font-semibold text-gray-700 text-sm">Chọn ảnh hoặc video từ máy</p>
             <p className="text-xs text-gray-400 mt-1.5">
               Tự nhận diện loại file · JPG, PNG, MP4, MOV
             </p>
           </button>
+          <button
+            onClick={() => setMediaPicker(true)}
+            className="w-full card border-2 border-dashed border-blue-200 py-8 text-center hover:border-blue-400 hover:bg-blue-50/50 transition-colors"
+          >
+            <div className="text-3xl mb-2">🖼️</div>
+            <p className="font-semibold text-blue-700 text-sm">Chọn từ thư viện Hình ảnh</p>
+            <p className="text-xs text-gray-400 mt-1">
+              Chọn ảnh/video đã tải lên trước đó
+            </p>
+          </button>
           <input ref={inputRef} type="file" hidden accept="image/*,video/*" onChange={pickFile} />
+
+          {showMediaPicker && (
+            <MediaPickerModal onClose={() => setMediaPicker(false)} onPick={pickFromLibrary} />
+          )}
         </div>
       ) : (
         <>
@@ -471,4 +513,95 @@ const fmtTime = s => {
   const m = Math.floor(s / 60)
   const sec = Math.floor(s % 60)
   return `${m}:${String(sec).padStart(2, '0')}`
+}
+/* ── Modal chọn ảnh/video từ thư viện ─────────────────────────────── */
+
+function MediaPickerModal({ onClose, onPick }) {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+
+  const searchTimer = useRef(null)
+  useEffect(() => {
+    clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(() => { setQuery(search); setPage(0) }, 400)
+    return () => clearTimeout(searchTimer.current)
+  }, [search])
+
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    const filters = {}
+    if (query) filters.q = query
+    listMedia(page, 30, filters).then(res => {
+      if (!alive) return
+      const env = res.data
+      const d = env?.data ?? env
+      const batch = d.content || []
+      setItems(prev => page === 0 ? batch : [...prev, ...batch])
+      setHasMore((d.currentPage || 0) < (d.totalPages || 0) - 1)
+      setLoading(false)
+    }).catch(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [query, page])
+
+  const fmtSize = b => {
+    if (b < 1024) return `${b} B`
+    if (b < 1048576) return `${(b / 1024).toFixed(0)} KB`
+    return `${(b / 1048576).toFixed(1)} MB`
+  }
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-end sm:items-center justify-center p-0 sm:p-4"
+      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white w-full sm:max-w-xl rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col"
+        style={{ height: 'min(80svh, 620px)' }}>
+
+        <div className="shrink-0 px-5 py-3.5 border-b border-gray-100 flex items-center gap-3">
+          <h2 className="font-bold text-gray-900 text-base">Chọn từ thư viện</h2>
+          <button onClick={onClose}
+            className="ml-auto w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 text-xl">
+            ×
+          </button>
+        </div>
+
+        <div className="shrink-0 px-5 py-3 border-b border-gray-100">
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Tìm theo tên file..."
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-blue-400" />
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-1.5">
+          {items.map(it => (
+            <button key={it.id} onClick={() => onPick(it)}
+              className="w-full flex items-center gap-3 p-2.5 rounded-xl border border-gray-100
+                bg-gray-50/60 hover:bg-blue-50 hover:border-blue-200 transition-colors text-left">
+              <div className="w-12 h-12 shrink-0 rounded-lg overflow-hidden bg-gray-200">
+                <img src={mediaUrl(it.thumbUrl)} alt="" className="w-full h-full object-cover" loading="lazy" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-gray-800 truncate">{it.originalName}</p>
+                <p className="text-xs text-gray-400">
+                  {it.mediaType === 'VIDEO' ? '🎬 Video' : '📷 Ảnh'} · {fmtSize(it.sizeBytes || 0)}
+                </p>
+              </div>
+            </button>
+          ))}
+
+          {loading && <p className="text-xs text-gray-300 text-center py-4">Đang tải...</p>}
+          {!loading && items.length === 0 && <p className="text-xs text-gray-300 text-center py-8">Không tìm thấy</p>}
+          {hasMore && !loading && (
+            <button onClick={() => setPage(p => p + 1)}
+              className="w-full py-2 text-xs text-blue-600 font-semibold hover:bg-blue-50 rounded-lg">
+              Tải thêm...
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }

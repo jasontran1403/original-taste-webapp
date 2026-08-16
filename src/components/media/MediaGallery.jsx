@@ -51,6 +51,12 @@ function tileWidthFor(cols) {
 }
 const SHARP_TILE_PX = 190
 
+/** HEIC/HEIF không render được trên Chrome/Firefox — luôn dùng thumbUrl (JPEG) */
+const isHeic = it =>
+  /\.hei[cf]$/i.test(it.originalName || '') ||
+  /\.hei[cf]$/i.test(it.url || '') ||
+  /heic|heif/i.test(it.contentType || '')
+
 export const toDateInput = d => {
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
