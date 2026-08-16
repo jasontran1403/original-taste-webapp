@@ -80,6 +80,9 @@ export default function MediaGallery({
   const lightboxOpenRef = useRef(false)
   const smoothBottom = useRef(false)
   const prevNonce = useRef(filterNonce)
+  const [loadingMore, setLoadingMore] = useState(false)
+  /** ID của các item đã từng render — KHÔNG gán lại animation khi prepend */
+  const renderedIds = useRef(new Set())
   lightboxOpenRef.current = lightbox !== null
 
   const sharp = tileWidthFor(COLUMNS) >= SHARP_TILE_PX
@@ -115,7 +118,13 @@ export default function MediaGallery({
   const load = useCallback(async (targetPage, prepend) => {
     if (loadingRef.current) return
     loadingRef.current = true
-    if (!prepend) setLoading(true)
+    if (!prepend) {
+      setLoading(true)
+      // Reset rendered IDs khi tải mới hoàn toàn (đổi filter / refresh)
+      renderedIds.current = new Set()
+    } else {
+      setLoadingMore(true)
+    }
 
     pendingScroll.current = prepend
       ? { prevHeight: document.documentElement.scrollHeight }
@@ -146,6 +155,7 @@ export default function MediaGallery({
       onNotify?.(e.message || 'Không tải được thư viện', false)
     } finally {
       setLoading(false)
+      setLoadingMore(false)
       loadingRef.current = false
     }
   }, [onlyFav, query, effFrom, effTo, expandable, expanded, fromMs, onNotify])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -285,6 +295,14 @@ export default function MediaGallery({
   const groups = groupByDate(items, Date.now(), granularity)
   const freshIds = new Set(items.slice(0, freshCount.current).map(i => i.id))
 
+  // Đánh dấu các item đã từng render — chúng sẽ KHÔNG chạy animation và KHÔNG bị thay bằng skeleton
+  useEffect(() => {
+    items.forEach(it => renderedIds.current.add(it.id))
+  }, [items])
+
+  // Chỉ hiện skeleton toàn màn hình khi CHƯA CÓ item nào (lần đầu hoặc đổi filter)
+  const showFullSkeleton = loading && items.length === 0
+
   return (
     <>
       <style>{`
@@ -296,25 +314,28 @@ export default function MediaGallery({
           from { opacity: 0; transform: translateY(-4px); }
           to   { opacity: 1; transform: none; }
         }
-        /* Chỉ lô ĐẦU TIÊN (không phải file chèn thêm) mới chạy hiệu ứng hiện dần,
-           để lúc cuộn lên tải thêm KHÔNG bị chớp trắng. */
         .media-tile  { animation: mediaIn .26s cubic-bezier(.2,.8,.3,1) both; }
-        .media-group { animation: groupIn .2s ease both; }
+        .media-group-enter { animation: groupIn .2s ease both; }
         @media (prefers-reduced-motion: reduce) {
-          .media-tile, .media-group { animation: none; }
+          .media-tile, .media-group-enter { animation: none; }
         }
       `}</style>
 
       <div className="pt-3" />
 
-      {loading ? (
+      {/* Skeleton khi đang tải thêm ở đỉnh (cuộn lên) — nằm TRÊN grid, không thay thế grid */}
+      {loadingMore && (
+        <div className="pt-1 pb-2"><SkeletonTiles count={10} /></div>
+      )}
+
+      {showFullSkeleton ? (
         <div className="pt-1"><SkeletonTiles count={20} /></div>
-      ) : items.length === 0 ? (
+      ) : !loading && items.length === 0 ? (
         <div className="py-20 text-center text-gray-300">
           <div className="text-5xl mb-3">{hasFilter ? '🔍' : '🖼️'}</div>
           <p className="text-sm">{hasFilter ? 'Không có mục nào khớp bộ lọc' : 'Chưa có tài nguyên nào'}</p>
         </div>
-      ) : (
+      ) : items.length > 0 && (
         <div ref={gridRef} className="select-none"
           onContextMenu={e => e.preventDefault()}
           style={{
@@ -322,8 +343,11 @@ export default function MediaGallery({
             WebkitTouchCallout: 'none',
             WebkitUserSelect: 'none',
           }}>
-        {groups.map(group => (
-          <section key={group.key} className="mb-4 media-group">
+        {groups.map(group => {
+          // Nhóm này có chứa item mới (vừa fetch) hay toàn item cũ (đã render)?
+          const isNewGroup = group.items.every(it => freshIds.has(it.id))
+          return (
+          <section key={group.key} className={`mb-4 ${isNewGroup ? 'media-group-enter' : ''}`}>
             <h3 className="py-1.5 text-xs font-bold text-gray-500 uppercase tracking-wider">
               {group.label}
               <span className="ml-2 font-normal text-gray-300 normal-case">{group.items.length}</span>
@@ -333,12 +357,14 @@ export default function MediaGallery({
               style={{ gridTemplateColumns: `repeat(${COLUMNS}, minmax(0, 1fr))` }}>
               {group.items.map((it, idx) => {
                 const picked = sel.isSelected(it.id)
+                // Item mới (vừa prepend) VÀ chưa từng render → có animation
+                const isNew = freshIds.has(it.id) && !renderedIds.current.has(it.id)
                 return (
                 <div key={it.id} data-select-id={it.id}
                   className={`relative aspect-square overflow-hidden bg-gray-100 rounded-lg group
-                    ${freshIds.has(it.id) ? '' : 'media-tile'}
+                    ${isNew ? '' : 'media-tile'}
                     ${picked ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
-                  style={{ animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
+                  style={isNew ? undefined : { animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
 
                   <button onClick={() => openItem(it)} className="w-full h-full">
                     <img
@@ -382,7 +408,8 @@ export default function MediaGallery({
               })}
             </div>
           </section>
-        ))}
+          )
+        })}
         </div>
       )}
 

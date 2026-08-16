@@ -7,14 +7,45 @@ import { uploadOneFile, CHUNK_THRESHOLD } from '../../services/api'
  * Luồng: chọn file → xem lại danh sách (có thumbnail, đổi ý thì xóa bớt) →
  * bấm Tải lên → theo dõi tiến độ từng file.
  *
- * Tải TUẦN TỰ từng file chứ không song song: gửi 10 video cùng lúc trên mạng
- * di động sẽ tranh băng thông, tất cả cùng chậm và dễ timeout. Tuần tự thì
- * mỗi file xong dứt điểm, hỏng file nào chỉ file đó hỏng.
+ * Hiển thị chi tiết: số file đã upload / tổng, dung lượng đã gửi / tổng,
+ * tốc độ trung bình (MB/s), và thời gian ước tính còn lại (ETA).
  */
+
+/** Định dạng đơn vị lớn nhất — 11111 MB → 11.11 GB */
+const fmtSize = bytes => {
+  if (bytes == null || bytes < 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes < 1024 ** 4) return `${(bytes / (1024 ** 3)).toFixed(2)} GB`
+  return `${(bytes / (1024 ** 4)).toFixed(2)} TB`
+}
+
+const fmtSpeed = bytesPerSec => {
+  if (!bytesPerSec || bytesPerSec <= 0) return '—'
+  return `${fmtSize(bytesPerSec)}/s`
+}
+
+const fmtDuration = seconds => {
+  if (!seconds || seconds <= 0 || !isFinite(seconds)) return '—'
+  if (seconds < 60) return `${Math.ceil(seconds)}s`
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60)
+    const s = Math.ceil(seconds % 60)
+    return `${m}m ${s}s`
+  }
+  const h = Math.floor(seconds / 3600)
+  const m = Math.ceil((seconds % 3600) / 60)
+  return `${h}h ${m}m`
+}
+
 export default function UploadModal({ onClose, onDone, onNotify }) {
   const [entries, setEntries] = useState([])   // { id, file, preview, status, progress, error }
   const [busy, setBusy] = useState(false)
   const inputRef = useRef(null)
+
+  // ── Thống kê tổng hợp khi đang upload ──
+  const [stats, setStats] = useState(null) // { doneCount, totalCount, bytesSent, bytesTotal, startTime, speed, eta }
 
   // Thu hồi object URL khi đóng để không rò rỉ bộ nhớ
   useEffect(() => () => {
@@ -30,8 +61,6 @@ export default function UploadModal({ onClose, onDone, onNotify }) {
       id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`,
       file,
       isVideo: file.type.startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm)$/i.test(file.name),
-      // Ảnh xem trước ngay; video chỉ hiện biểu tượng vì tạo poster ở client
-      // phải decode cả file — tốn pin và chậm trên điện thoại
       preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
       status: 'pending',
       progress: 0,
@@ -62,23 +91,56 @@ export default function UploadModal({ onClose, onDone, onNotify }) {
 
     setBusy(true)
     let ok = 0, fail = 0
+    const totalCount = queue.length
+    const bytesTotal = queue.reduce((s, e) => s + e.file.size, 0)
+    let bytesDonePrev = 0        // bytes of fully finished files
+    let currentFileProgress = 0  // 0-100 for current file
+    const startTime = Date.now()
 
-    for (const entry of queue) {
+    const updateStats = (doneCount, currentIdx) => {
+      const now = Date.now()
+      const elapsed = (now - startTime) / 1000
+      const currentFileBytes = queue[currentIdx]?.file.size || 0
+      const bytesSent = bytesDonePrev + (currentFileProgress / 100) * currentFileBytes
+      const speed = elapsed > 0.5 ? bytesSent / elapsed : 0
+      const bytesRemaining = bytesTotal - bytesSent
+      const eta = speed > 0 ? bytesRemaining / speed : 0
+
+      setStats({
+        doneCount, totalCount, bytesSent, bytesTotal,
+        startTime, speed, eta,
+      })
+    }
+
+    for (let i = 0; i < queue.length; i++) {
+      const entry = queue[i]
+      currentFileProgress = 0
       patch(entry.id, { status: 'uploading', progress: 0, error: null })
+      updateStats(ok + fail, i)
+
       try {
-        await uploadOneFile(entry.file, p => patch(entry.id, { progress: p }))
+        await uploadOneFile(entry.file, p => {
+          currentFileProgress = p
+          patch(entry.id, { progress: p })
+          updateStats(ok + fail, i)
+        })
         patch(entry.id, { status: 'done', progress: 100 })
+        bytesDonePrev += entry.file.size
         ok++
+        updateStats(ok + fail, i)
       } catch (err) {
         patch(entry.id, {
           status: 'error',
           error: err.response?.data?.message || err.message || 'Lỗi không xác định',
         })
+        bytesDonePrev += entry.file.size // count errored file size too for progress
         fail++
+        updateStats(ok + fail, i)
       }
     }
 
     setBusy(false)
+    setStats(null)
     onNotify?.(
       fail === 0 ? `Đã tải lên ${ok} file` : `${ok} file thành công, ${fail} file lỗi`,
       fail === 0
@@ -112,6 +174,29 @@ export default function UploadModal({ onClose, onDone, onNotify }) {
           </button>
         </div>
 
+        {/* ── Thanh thống kê khi đang upload ── */}
+        {stats && (
+          <div className="shrink-0 px-5 py-3 border-b border-gray-100 bg-blue-50/60">
+            {/* Thanh tổng tiến độ */}
+            <div className="h-2 bg-gray-200 rounded-full overflow-hidden mb-2.5">
+              <div className="h-full bg-blue-600 transition-all duration-300 rounded-full"
+                style={{ width: `${stats.bytesTotal > 0 ? Math.min(100, (stats.bytesSent / stats.bytesTotal) * 100) : 0}%` }} />
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+              <span>
+                <span className="font-semibold text-gray-800">{stats.doneCount}</span>
+                <span className="text-gray-400">/{stats.totalCount}</span> file
+              </span>
+              <span>
+                <span className="font-semibold text-gray-800">{fmtSize(stats.bytesSent)}</span>
+                <span className="text-gray-400">/{fmtSize(stats.bytesTotal)}</span>
+              </span>
+              <span title="Tốc độ">⚡ {fmtSpeed(stats.speed)}</span>
+              <span title="Thời gian còn lại">⏱ {fmtDuration(stats.eta)}</span>
+            </div>
+          </div>
+        )}
+
         {/* Danh sách — chiều cao hộp thoại cố định, nhiều file thì cuộn */}
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 space-y-2">
           <button
@@ -125,7 +210,7 @@ export default function UploadModal({ onClose, onDone, onNotify }) {
             <p className="text-xs text-gray-400 mt-1">Chọn được nhiều file cùng lúc</p>
           </button>
           <input ref={inputRef} type="file" hidden multiple
-            accept="image/*,video/*" onChange={addFiles} />
+            accept="image/*,video/*,.heic,.heif" onChange={addFiles} />
 
           {entries.map(entry => (
             <div key={entry.id}
@@ -188,10 +273,4 @@ export default function UploadModal({ onClose, onDone, onNotify }) {
       </div>
     </div>
   )
-}
-
-const fmtSize = bytes => {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / 1048576).toFixed(1)} MB`
 }

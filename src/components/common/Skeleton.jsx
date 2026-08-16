@@ -135,10 +135,11 @@ export function SkeletonFileRows({ rows = 6 }) {
   )
 }
 
-/** Chờ lưới ảnh ở trang Hình ảnh */
+/** Chờ lưới ảnh ở trang Hình ảnh — luôn 5 cột giống gallery */
 export function SkeletonTiles({ count = 12 }) {
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-1.5 sm:gap-2">
+    <div className="grid gap-1.5"
+      style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))' }}>
       {Array.from({ length: count }).map((_, i) => (
         <SkeletonBox key={i} className="aspect-square" />
       ))}
