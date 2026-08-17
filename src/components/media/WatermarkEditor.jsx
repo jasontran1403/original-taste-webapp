@@ -41,19 +41,43 @@ const POSITION_PRESETS = [
   { label: '↙', x: 15, y: 85 }, { label: '↓', x: 50, y: 85 }, { label: '↘', x: 85, y: 85 },
 ]
 
+const fmtEta = sec => {
+  if (sec == null || !Number.isFinite(sec)) return '…'
+  if (sec < 1) return '<1s'
+  if (sec < 60) return `${Math.ceil(sec)}s`
+  const m = Math.floor(sec / 60)
+  const s = Math.ceil(sec % 60)
+  return `${m}p${String(s).padStart(2, '0')}s`
+}
+
+const fmtBytes = b => {
+  if (!b || b < 1024) return `${b || 0} B`
+  if (b < 1048576) return `${(b / 1024).toFixed(0)} KB`
+  return `${(b / 1048576).toFixed(1)} MB`
+}
+
 export default function WatermarkEditor({ onSaved, onNotify }) {
   const [file, setFile] = useState(null)
-  const [kind, setKind] = useState('image')   // suy ra từ file, không cho chọn tay
+  const [kind, setKind] = useState('image')
   const [previewUrl, setUrl] = useState(null)
   const [logo, setLogo] = useState(null)
   const [settings, setSettings] = useState(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [saveEta, setSaveEta] = useState(null)
   const [error, setError] = useState('')
   const [playing, setPlaying] = useState(false)
   const [firstFrame, setFirst] = useState(false)
   const [duration, setDuration] = useState(0)
   const [current, setCurrent] = useState(0)
+
+  const [showMediaPicker, setMediaPicker] = useState(false)
+  const [libLoading, setLibLoading] = useState(false)
+  const [libProgress, setLibProgress] = useState(0)
+  const [libLoaded, setLibLoaded] = useState(0)
+  const [libTotal, setLibTotal] = useState(0)
+  const [libEta, setLibEta] = useState(null)
+  const [libName, setLibName] = useState('')
 
   const canvasRef = useRef(null)
   const videoRef = useRef(null)
@@ -61,6 +85,8 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
   const rafRef = useRef(null)
   const inputRef = useRef(null)
   const dragRef = useRef(null)
+  const libAbortRef = useRef(null)
+  const saveAbortRef = useRef(null)
 
   const isVideo = kind === 'video'
 
@@ -80,6 +106,12 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
 
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl) }, [previewUrl])
 
+  // Hủy request khi unmount
+  useEffect(() => () => {
+    libAbortRef.current?.abort()
+    saveAbortRef.current?.abort()
+  }, [])
+
   const reset = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl)
     setFile(null); setUrl(null); imgRef.current = null
@@ -91,8 +123,6 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
     e.target.value = ''
     if (!f) return
 
-    // Tự nhận diện: ưu tiên MIME, thiếu thì suy từ đuôi file
-    // (một số máy Android trả content-type rỗng cho .mov)
     const byMime = f.type.startsWith('video/') ? 'video'
       : f.type.startsWith('image/') ? 'image' : null
     const byExt = /\.(mp4|mov|m4v|avi|mkv|webm)$/i.test(f.name) ? 'video'
@@ -171,7 +201,6 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
     }
   }
 
-  /** Hit-test theo PIXEL, không theo % — % trục X và Y không cùng đơn vị */
   const isOnWatermark = pos => {
     const canvas = canvasRef.current
     if (!canvas || !logo) return false
@@ -188,17 +217,11 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
     const pos = toPct(e)
     if (!isOnWatermark(pos)) return
     e.preventDefault()
-    // Giữ con trỏ (chuột/ngón tay) trên canvas: vẫn nhận được pointermove/
-    // pointerup ngay cả khi ngón tay trượt ra ngoài canvas — nhờ vậy luôn
-    // dọn được dragRef khi thả tay, không bị "kẹt" trạng thái kéo.
-    try { e.currentTarget.setPointerCapture?.(e.pointerId) } catch { /* trình duyệt cũ */ }
+    try { e.currentTarget.setPointerCapture?.(e.pointerId) } catch { /* */ }
     dragRef.current = { offX: settings.x - pos.x, offY: settings.y - pos.y }
   }
 
   const onMove = e => {
-    // Đọc ra biến cục bộ NGAY: setSettings chạy callback bất đồng bộ khi render,
-    // nếu tới lúc đó tay đã thả (onUp gán dragRef.current = null) thì đọc
-    // dragRef.current.offX sẽ ném TypeError → app trắng màn hình.
     const drag = dragRef.current
     if (!drag) {
       if (canvasRef.current) {
@@ -218,25 +241,19 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
   const onUp = e => {
     dragRef.current = null
     if (e?.pointerId != null) {
-      try { canvasRef.current?.releasePointerCapture?.(e.pointerId) } catch { /* đã tự nhả */ }
+      try { canvasRef.current?.releasePointerCapture?.(e.pointerId) } catch { /* */ }
     }
     if (canvasRef.current) canvasRef.current.style.cursor = 'default'
   }
 
   // ── Nạp video ───────────────────────────────────────────────────
-  /**
-   * Trình duyệt không decode khung hình nào cho tới khi video được phát, nên
-   * canvas sẽ trắng cho tới lúc bấm play. Ép bằng cách tua tới 0.05s: thao tác
-   * seek buộc decode đúng một khung và bắn sự kiện `seeked`.
-   * Tua 0.05s thay vì 0 vì nhiều file có khung đầu đen.
-   */
   const handleLoadedMetadata = () => {
     const v = videoRef.current
     if (!v) return
     setDuration(v.duration || 0)
     try {
       v.currentTime = Math.min(0.05, (v.duration || 1) / 2)
-    } catch { /* chưa buffer đủ để seek — các sự kiện dưới vẫn xử lý được */ }
+    } catch { /* */ }
   }
 
   const handleFrameReady = () => {
@@ -258,17 +275,55 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
     if (!v) return
     v.currentTime = t
     setCurrent(t)
-    // `seeked` (→ handleFrameReady) sẽ vẽ khi khung hình mới decode xong
+  }
+
+  // ── Hủy tải thư viện / lưu ──────────────────────────────────────
+  const cancelLibLoad = () => {
+    libAbortRef.current?.abort()
+    libAbortRef.current = null
+    setLibLoading(false)
+    setLibProgress(0)
+    setLibLoaded(0)
+    setLibTotal(0)
+    setLibEta(null)
+    setLibName('')
+  }
+
+  const cancelSave = () => {
+    saveAbortRef.current?.abort()
+    saveAbortRef.current = null
+    setSaving(false)
+    setProgress(0)
+    setSaveEta(null)
   }
 
   // ── Lưu vào thư viện ────────────────────────────────────────────
   const save = async () => {
-    if (!file) return
-    setSaving(true); setError(''); setProgress(0)
+    if (!file || saving) return
+    setSaving(true); setError(''); setProgress(0); setSaveEta(null)
+
+    const ac = new AbortController()
+    saveAbortRef.current = ac
+    const t0 = performance.now()
+
     try {
       const res = await watermarkAndSave(file, settings, ev => {
-        if (ev.total) setProgress(Math.round((ev.loaded / ev.total) * 100))
-      })
+        if (!ev.total) return
+        const pct = Math.round((ev.loaded / ev.total) * 100)
+        setProgress(Math.min(pct, 99))
+        const elapsed = (performance.now() - t0) / 1000
+        if (elapsed > 0.4 && ev.loaded > 0) {
+          const speed = ev.loaded / elapsed
+          const remain = Math.max(0, ev.total - ev.loaded)
+          setSaveEta(speed > 0 ? remain / speed : null)
+        }
+      }, ac.signal)
+
+      if (ac.signal.aborted) return
+
+      setProgress(100)
+      setSaveEta(null)
+
       const env = res.data
       if (env && typeof env.code === 'number' && !(env.code >= 900 && env.code < 1000)) {
         throw new Error(env.message || 'Xử lý thất bại')
@@ -277,39 +332,107 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
       reset()
       onSaved?.(env?.data ?? env)
     } catch (err) {
+      if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED' || err.name === 'AbortError') {
+        onNotify?.('Đã hủy lưu', false)
+        return
+      }
       const msg = err.response?.data?.message || err.message || 'Không lưu được file'
       setError(msg)
       onNotify?.(msg, false)
     } finally {
-      setSaving(false); setProgress(0)
+      if (saveAbortRef.current === ac) saveAbortRef.current = null
+      setSaving(false)
+      setProgress(0)
+      setSaveEta(null)
     }
   }
 
   // ── Chọn từ thư viện ──────────────────────────────────────────
-  const [showMediaPicker, setMediaPicker] = useState(false)
+  const finishLibPick = (blob, asset) => {
+    const f = new File([blob], asset.originalName || 'file', {
+      type: blob.type || asset.contentType || '',
+    })
+    const byMime = f.type.startsWith('video/') ? 'video'
+      : f.type.startsWith('image/') ? 'image' : null
+    const byExt = /\.(mp4|mov|m4v|avi|mkv|webm)$/i.test(f.name) ? 'video'
+      : /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(f.name) ? 'image' : null
+    const detected = byMime || byExt || 'image'
+
+    reset()
+    setKind(detected)
+    setFile(f)
+    setUrl(URL.createObjectURL(f))
+  }
 
   const pickFromLibrary = async (asset) => {
     setMediaPicker(false)
-    // Fetch the file from server as a blob, then create a File from it
+    cancelLibLoad()
+
+    const ac = new AbortController()
+    libAbortRef.current = ac
+    setLibLoading(true)
+    setLibProgress(0)
+    setLibLoaded(0)
+    setLibTotal(0)
+    setLibEta(null)
+    setLibName(asset.originalName || 'file')
+    setError('')
+
+    const t0 = performance.now()
+
     try {
       const url = mediaUrl(asset.url)
-      const res = await fetch(url)
+      const res = await fetch(url, { signal: ac.signal })
       if (!res.ok) throw new Error('Fetch failed')
-      const blob = await res.blob()
-      const f = new File([blob], asset.originalName || 'file', { type: blob.type || asset.contentType })
 
-      const byMime = f.type.startsWith('video/') ? 'video'
-        : f.type.startsWith('image/') ? 'image' : null
-      const byExt = /\.(mp4|mov|m4v|avi|mkv|webm)$/i.test(f.name) ? 'video'
-        : /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(f.name) ? 'image' : null
-      const detected = byMime || byExt || 'image'
+      const total = Number(res.headers.get('content-length')) || Number(asset.sizeBytes) || 0
+      setLibTotal(total)
 
-      reset()
-      setKind(detected)
-      setFile(f)
-      setUrl(URL.createObjectURL(f))
+      const reader = res.body?.getReader()
+      if (!reader) {
+        const blob = await res.blob()
+        if (ac.signal.aborted) return
+        finishLibPick(blob, asset)
+        return
+      }
+
+      const chunks = []
+      let received = 0
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+        received += value.byteLength
+        setLibLoaded(received)
+        if (total > 0) {
+          setLibProgress(Math.min(99, Math.round((received / total) * 100)))
+          const elapsed = (performance.now() - t0) / 1000
+          if (elapsed > 0.3 && received > 0) {
+            const speed = received / elapsed
+            const remain = Math.max(0, total - received)
+            setLibEta(speed > 0 ? remain / speed : null)
+          }
+        }
+      }
+
+      if (ac.signal.aborted) return
+      setLibProgress(100)
+      setLibEta(0)
+      const blob = new Blob(chunks, {
+        type: res.headers.get('content-type') || asset.contentType || '',
+      })
+      finishLibPick(blob, asset)
     } catch (e) {
+      if (e.name === 'AbortError') return
       setError('Không tải được file từ thư viện: ' + (e.message || ''))
+    } finally {
+      if (libAbortRef.current === ac) libAbortRef.current = null
+      setLibLoading(false)
+      setLibProgress(0)
+      setLibLoaded(0)
+      setLibTotal(0)
+      setLibEta(null)
+      setLibName('')
     }
   }
 
@@ -322,7 +445,37 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
         </div>
       )}
 
-      {!file ? (
+      {libLoading && (
+        <div className="mb-4 card p-4 border border-blue-100 bg-blue-50/60">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-800 truncate">
+                Đang tải từ thư viện…
+              </p>
+              <p className="text-xs text-gray-500 truncate mt-0.5">{libName}</p>
+            </div>
+            <button type="button" onClick={cancelLibLoad}
+              className="btn-secondary shrink-0 text-xs">
+              Hủy
+            </button>
+          </div>
+          <div className="h-2 rounded-full bg-blue-100 overflow-hidden">
+            <div className="h-full bg-blue-600 transition-all duration-150"
+              style={{ width: `${libProgress}%` }} />
+          </div>
+          <div className="mt-1.5 flex justify-between text-[11px] text-gray-500 tabular-nums">
+            <span>
+              {libProgress}%
+              {libTotal > 0 && ` · ${fmtBytes(libLoaded)} / ${fmtBytes(libTotal)}`}
+            </span>
+            <span>
+              {libEta != null ? `Còn ~${fmtEta(libEta)}` : 'Đang ước tính…'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!file && !libLoading ? (
         <div className="max-w-2xl mx-auto pt-4 sm:pt-8 space-y-3">
           <button
             onClick={() => inputRef.current?.click()}
@@ -350,36 +503,44 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
             <MediaPickerModal onClose={() => setMediaPicker(false)} onPick={pickFromLibrary} />
           )}
         </div>
-      ) : (
+      ) : file ? (
         <>
-          {/* Thanh file + nút lưu — dính trên cùng để trên điện thoại luôn bấm được */}
           <div className="sticky top-0 z-10 -mx-2 sm:-mx-4 lg:-mx-6 px-2 sm:px-4 lg:px-6 py-2.5
             bg-gray-50/95 backdrop-blur border-b border-gray-200 flex items-center gap-2 mb-4">
             <span className="badge bg-white border border-gray-200 text-gray-500 shrink-0">
               {isVideo ? '🎥' : '📷'} {(file.size / 1048576).toFixed(1)} MB
             </span>
             <span className="text-xs text-gray-400 truncate flex-1 hidden sm:block">{file.name}</span>
-            <button onClick={reset} className="btn-secondary shrink-0 text-xs">Đổi file</button>
-            <button onClick={save} disabled={saving} className="btn-primary shrink-0">
-              {saving ? (progress < 100 ? `Đang gửi ${progress}%` : 'Đang xử lý...') : '💾 Lưu'}
-            </button>
+
+            {saving ? (
+              <div className="flex items-center gap-2 min-w-0 flex-1 sm:flex-none sm:max-w-xs">
+                <div className="flex-1 min-w-[100px]">
+                  <div className="h-1.5 rounded-full bg-gray-200 overflow-hidden">
+                    <div className="h-full bg-blue-600 transition-all duration-150"
+                      style={{ width: `${progress}%` }} />
+                  </div>
+                  <p className="text-[10px] text-gray-500 mt-0.5 tabular-nums">
+                    {progress < 100
+                      ? `Gửi ${progress}%${saveEta != null ? ` · còn ~${fmtEta(saveEta)}` : ''}`
+                      : 'Đang gắn watermark…'}
+                  </p>
+                </div>
+                <button type="button" onClick={cancelSave}
+                  className="btn-secondary shrink-0 text-xs">
+                  Hủy
+                </button>
+              </div>
+            ) : (
+              <>
+                <button onClick={reset} className="btn-secondary shrink-0 text-xs">Đổi file</button>
+                <button onClick={save} className="btn-primary shrink-0">💾 Lưu</button>
+              </>
+            )}
           </div>
 
-          {/*
-            Bố cục FULL WIDTH.
-
-            Bản cũ chia 4 cột đều nhau (lg:grid-cols-4), nên trên màn 27" khung
-            xem chỉ chiếm 3/4 rồi lại bị canvas giới hạn max-h-[60vh] bóp nhỏ
-            thêm — kết quả là một ô ảnh bé tí nằm lọt thỏm giữa màn hình.
-
-            Giờ dùng cột phụ CỐ ĐỊNH 300–340px, phần còn lại dành hết cho khung
-            xem. Màn càng rộng thì ảnh càng lớn thay vì bảng điều khiển phình ra
-            — bảng đó chỉ có mấy thanh trượt, rộng thêm cũng vô ích.
-          */}
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px]
             xl:grid-cols-[minmax(0,1fr)_340px] gap-4 lg:gap-5 items-start">
 
-            {/* Preview — lên trước trên điện thoại */}
             <section className="order-1 min-w-0">
               <div className="card p-2 sm:p-4 bg-gray-100/70">
                 <div className="flex justify-center">
@@ -387,13 +548,6 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
                     ref={canvasRef}
                     onPointerDown={onDown} onPointerMove={onMove}
                     onPointerUp={onUp} onPointerCancel={onUp}
-                    /*
-                      Chiều cao tính theo phần còn lại của màn hình thay vì
-                      %vh cứng: 44px thanh tab + ~56px thanh tệp + ~120px thanh
-                      điều khiển video và chú thích. Nhờ vậy ảnh dọc trên màn
-                      hình cao vẫn dùng hết chỗ, mà không đẩy nút bấm xuống dưới
-                      mép màn hình.
-                    */
                     className="max-w-full w-auto h-auto rounded-lg shadow touch-none bg-white
                       max-h-[46svh] sm:max-h-[calc(100svh-260px)] lg:max-h-[calc(100svh-230px)]"
                   />
@@ -436,12 +590,6 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
               </div>
             </section>
 
-            {/* Điều chỉnh */}
-            {/*
-              Trên desktop bảng điều chỉnh được ghim lại: ảnh dọc rất cao thì
-              cuộn xuống xem chi tiết vẫn kéo được thanh trượt mà không phải
-              cuộn ngược lên.
-            */}
             <aside className="order-2 lg:sticky lg:top-[60px]">
               <div className="card p-4 space-y-5">
                 <Slider label="Kích thước" value={`${Math.round(settings.scale * 100)}%`}
@@ -485,6 +633,10 @@ export default function WatermarkEditor({ onSaved, onNotify }) {
             </aside>
           </div>
         </>
+      ) : null}
+
+      {showMediaPicker && !libLoading && (
+        <MediaPickerModal onClose={() => setMediaPicker(false)} onPick={pickFromLibrary} />
       )}
     </>
   )
@@ -514,6 +666,7 @@ const fmtTime = s => {
   const sec = Math.floor(s % 60)
   return `${m}:${String(sec).padStart(2, '0')}`
 }
+
 /* ── Modal chọn ảnh/video từ thư viện ─────────────────────────────── */
 
 function MediaPickerModal({ onClose, onPick }) {
@@ -524,7 +677,7 @@ function MediaPickerModal({ onClose, onPick }) {
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [albums, setAlbums] = useState([])
-  const [albumId, setAlbumId] = useState(null) // null = tất cả (chỉ khi chưa có album)
+  const [albumId, setAlbumId] = useState(null)
   const [albumsReady, setAlbumsReady] = useState(false)
 
   const listRef = useRef(null)
@@ -532,7 +685,6 @@ function MediaPickerModal({ onClose, onPick }) {
   const loadingRef = useRef(false)
   const searchTimer = useRef(null)
 
-  // Debounce tìm kiếm theo tên
   useEffect(() => {
     clearTimeout(searchTimer.current)
     searchTimer.current = setTimeout(() => {
@@ -542,7 +694,6 @@ function MediaPickerModal({ onClose, onPick }) {
     return () => clearTimeout(searchTimer.current)
   }, [search])
 
-  // Tải danh sách album → mặc định chọn album đầu tiên nếu có
   useEffect(() => {
     listAlbums()
       .then(res => {
@@ -564,7 +715,6 @@ function MediaPickerModal({ onClose, onPick }) {
       .finally(() => setAlbumsReady(true))
   }, [])
 
-  // Fetch media theo page / query / album — chờ albumsReady để tránh flash “tất cả”
   useEffect(() => {
     if (!albumsReady) return
 
@@ -599,7 +749,6 @@ function MediaPickerModal({ onClose, onPick }) {
     setPage(0)
   }
 
-  // Infinite scroll: sentinel vào vùng nhìn thấy → tải trang tiếp
   useEffect(() => {
     const root = listRef.current
     const sentinel = sentinelRef.current
@@ -638,9 +787,14 @@ function MediaPickerModal({ onClose, onPick }) {
           </button>
         </div>
 
-        {/* Load file theo album - chưa có album thì load tất cả */}
         <div className="shrink-0 px-5 py-3 border-b border-gray-100">
           <div className="flex gap-2 items-center">
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Tìm theo tên file..."
+              className="w-[65%] min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-blue-400"
+            />
             <select
               value={albumId ?? ''}
               onChange={onAlbumChange}
@@ -682,7 +836,6 @@ function MediaPickerModal({ onClose, onPick }) {
             <p className="text-xs text-gray-300 text-center py-8">Không tìm thấy</p>
           )}
 
-          {/* Sentinel infinite scroll */}
           {hasMore && <div ref={sentinelRef} className="h-4" aria-hidden="true" />}
         </div>
       </div>

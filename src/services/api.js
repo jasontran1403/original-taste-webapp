@@ -412,13 +412,14 @@ export const removeFromAlbum = (albumId, assetIds) =>
   api.post(`/api/tools/media/albums/${albumId}/remove`, { assetIds })
 
 /** Gắn watermark rồi lưu thẳng vào thư viện, trả về metadata của file mới */
-export const watermarkAndSave = (file, settings, onProgress) => {
+export const watermarkAndSave = (file, settings, onProgress, signal) => {
   const form = new FormData()
   form.append('file', file)
   form.append('settings', JSON.stringify(settings))
   return api.post('/api/tools/watermark/save', form, {
     timeout: 15 * 60 * 1000,
     onUploadProgress: onProgress,
+    signal,
   })
 }
 
