@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import {
   listMedia, deleteMedia, renameMedia, favoriteMedia, mediaUrl,
   deleteMediaBatch, mediaZipUrl,
@@ -24,7 +24,7 @@ function triggerDownload(url) {
  * Thư viện ảnh/video — infinite scroll, 100 ảnh/batch.
  *
  * Server trả mới nhất trước (DESC) → giữ nguyên: mới nhất ở trên cùng.
- * Load trang → ở top (không cần scroll).
+ * Load trang / đổi filter → ép scroll về top (không animate).
  * Cuộn XUỐNG → khi đã scroll qua ~80% nội dung hiện tại → fetch batch cũ hơn và APPEND.
  *
  * Filter yêu thích xử lý client-side → animation biến mất/hiện lại.
@@ -72,9 +72,11 @@ export default function MediaGallery({
   const hasMore    = useRef(true)
   const loadingRef = useRef(false)
 
+  // Scroll
+  const pendingScrollTop = useRef(false)
   /**
    * cooldown = true ngay sau reset load, chặn scroll handler trigger load thêm.
-   * Tắt sau khi DOM ổn định.
+   * Chỉ tắt SAU KHI scrollTo top đã thực thi xong + ổn định.
    */
   const cooldown = useRef(true)
 
@@ -111,6 +113,7 @@ export default function MediaGallery({
     if (reset) {
       setLoading(true)
       cooldown.current = true
+      pendingScrollTop.current = true
     } else {
       setLoadingMore(true)
     }
@@ -135,16 +138,12 @@ export default function MediaGallery({
         setAllItems(prev => [...prev, ...batch])
       }
     } catch (e) {
+      pendingScrollTop.current = false
       onNotify?.(e.message || 'Không tải được thư viện', false)
     } finally {
       setLoading(false)
       setLoadingMore(false)
       loadingRef.current = false
-
-      // Mở khóa infinite scroll sau khi DOM ổn định
-      if (reset) {
-        setTimeout(() => { cooldown.current = false }, 350)
-      }
     }
   }, [buildFilters, onNotify])
 
@@ -165,6 +164,19 @@ export default function MediaGallery({
     setItems(onlyFav ? allItems.filter(i => i.favorite) : allItems)
   }, [allItems, onlyFav])
 
+  // ── Ép scroll về top sau khi load/reset ─────────────────────────
+  useLayoutEffect(() => {
+    if (!pendingScrollTop.current) return
+    pendingScrollTop.current = false
+
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: 'auto' })
+      setTimeout(() => {
+        cooldown.current = false
+      }, 350)
+    })
+  }, [items])
+
   // ── Infinite scroll: cuộn xuống ~80% → fetch batch tiếp ────────
   useEffect(() => {
     const onScroll = () => {
@@ -175,7 +187,6 @@ export default function MediaGallery({
       const el = document.documentElement
       const maxScroll = el.scrollHeight - window.innerHeight
 
-      // Không có vùng cuộn → không trigger
       if (maxScroll <= 0) return
 
       // Đã scroll xuống > 80% → fetch thêm
@@ -314,65 +325,65 @@ export default function MediaGallery({
             WebkitTouchCallout: 'none',
             WebkitUserSelect: 'none',
           }}>
-        {groups.map(group => (
-          <section key={group.key} className="mb-4 media-group-enter">
-            <h3 className="py-1.5 text-xs font-bold text-gray-500 uppercase tracking-wider">
-              {group.label}
-              <span className="ml-2 font-normal text-gray-300 normal-case">{group.items.length}</span>
-            </h3>
+          {groups.map(group => (
+            <section key={group.key} className="mb-4 media-group-enter">
+              <h3 className="py-1.5 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                {group.label}
+                <span className="ml-2 font-normal text-gray-300 normal-case">{group.items.length}</span>
+              </h3>
 
-            <div className="grid gap-1.5"
-              style={{ gridTemplateColumns: `repeat(${COLUMNS}, minmax(0, 1fr))` }}>
-              {group.items.map((it, idx) => {
-                const picked = sel.isSelected(it.id)
-                return (
-                <div key={it.id} data-select-id={it.id}
-                  className={`relative aspect-square overflow-hidden bg-gray-100 rounded-lg group media-tile
-                    ${picked ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
-                  style={{ animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
+              <div className="grid gap-1.5"
+                style={{ gridTemplateColumns: `repeat(${COLUMNS}, minmax(0, 1fr))` }}>
+                {group.items.map((it, idx) => {
+                  const picked = sel.isSelected(it.id)
+                  return (
+                    <div key={it.id} data-select-id={it.id}
+                      className={`relative aspect-square overflow-hidden bg-gray-100 rounded-lg group media-tile
+                        ${picked ? 'ring-2 ring-blue-500 ring-offset-1' : ''}`}
+                      style={{ animationDelay: `${Math.min(idx, 12) * 18}ms` }}>
 
-                  <button onClick={() => openItem(it)} className="w-full h-full">
-                    <img
-                      src={mediaUrl(sharp && it.mediaType !== 'VIDEO' ? it.url : it.thumbUrl)}
-                      alt={it.originalName}
-                      loading="lazy"
-                      decoding="async"
-                      draggable={false}
-                      style={{ WebkitTouchCallout: 'none' }}
-                      className={`w-full h-full object-cover transition
-                        ${picked ? 'brightness-90 scale-95' : 'group-hover:brightness-90'}`}
-                    />
-                  </button>
+                      <button onClick={() => openItem(it)} className="w-full h-full">
+                        <img
+                          src={mediaUrl(sharp && it.mediaType !== 'VIDEO' ? it.url : it.thumbUrl)}
+                          alt={it.originalName}
+                          loading="lazy"
+                          decoding="async"
+                          draggable={false}
+                          style={{ WebkitTouchCallout: 'none' }}
+                          className={`w-full h-full object-cover transition
+                            ${picked ? 'brightness-90 scale-95' : 'group-hover:brightness-90'}`}
+                        />
+                      </button>
 
-                  {it.favorite && (
-                    <span className="absolute inset-0 rounded-lg ring-2 ring-red-500 ring-inset pointer-events-none z-[2]" />
-                  )}
+                      {it.favorite && (
+                        <span className="absolute inset-0 rounded-lg ring-2 ring-red-500 ring-inset pointer-events-none z-[2]" />
+                      )}
 
-                  {it.mediaType === 'VIDEO' && (
-                    <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <span className="w-8 h-8 rounded-full bg-black/50 text-white text-xs flex items-center justify-center">▶</span>
-                    </span>
-                  )}
+                      {it.mediaType === 'VIDEO' && (
+                        <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <span className="w-8 h-8 rounded-full bg-black/50 text-white text-xs flex items-center justify-center">▶</span>
+                        </span>
+                      )}
 
-                  {it.source === 'WATERMARK' && (
-                    <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-blue-600/90 text-white text-[9px] font-bold pointer-events-none">
-                      WM
-                    </span>
-                  )}
+                      {it.source === 'WATERMARK' && (
+                        <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-blue-600/90 text-white text-[9px] font-bold pointer-events-none">
+                          WM
+                        </span>
+                      )}
 
-                  {sel.selectMode && (
-                    <span className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center
-                      justify-center text-[11px] pointer-events-none z-[3]
-                      ${picked ? 'bg-blue-500 border-white text-white' : 'bg-black/30 border-white/80 text-transparent'}`}>
-                      ✓
-                    </span>
-                  )}
-                </div>
-                )
-              })}
-            </div>
-          </section>
-        ))}
+                      {sel.selectMode && (
+                        <span className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center
+                          justify-center text-[11px] pointer-events-none z-[3]
+                          ${picked ? 'bg-blue-500 border-white text-white' : 'bg-black/30 border-white/80 text-transparent'}`}>
+                          ✓
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       )}
 
