@@ -4,7 +4,7 @@
  */
 export default function SelectionBar({
   count, onDownload, onDelete, onCancel, onDeselectAll,
-  onAddToAlbum, busy = false,
+  onAddToAlbum, onFavorite, busy = false,
 }) {
   return (
     <div className="fixed bottom-0 inset-x-0 z-40 bg-white/70 backdrop-blur-2xl
@@ -26,6 +26,16 @@ export default function SelectionBar({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {onFavorite && (
+            <button onClick={onFavorite} disabled={busy || count === 0}
+              className="h-10 px-4 rounded-xl text-sm font-semibold text-white bg-rose-600/90
+                border border-rose-400/50 shadow-lg shadow-rose-500/25 backdrop-blur-md
+                flex items-center gap-1.5 active:scale-95 transition disabled:opacity-50">
+              <span className="text-base leading-none">❤️</span>
+              <span className="hidden xs:inline sm:inline">Thích</span>
+            </button>
+          )}
+
           {onAddToAlbum && (
             <button onClick={onAddToAlbum} disabled={busy || count === 0}
               className="h-10 px-4 rounded-xl text-sm font-semibold text-white bg-purple-600/90

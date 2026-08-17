@@ -261,6 +261,32 @@ export default function MediaGallery({
     onNotify?.(`Đang tải ${ids.length} mục...`)
   }
 
+  const favoriteSelected = async () => {
+    const ids = selectedIds()
+    if (ids.length === 0) return
+
+    setBusy(true)
+    const idSet = new Set(ids)
+
+    // Optimistic update
+    setAllItems(prev => prev.map(i =>
+      idSet.has(i.id) ? { ...i, favorite: true } : i
+    ))
+
+    try {
+      await Promise.all(ids.map(id => favoriteMedia(id, true)))
+      onNotify?.(`Đã thích ${ids.length} mục`)
+    } catch {
+      // Rollback
+      setAllItems(prev => prev.map(i =>
+        idSet.has(i.id) ? { ...i, favorite: false } : i
+      ))
+      onNotify?.('Cập nhật yêu thích thất bại', false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const confirmDeleteSelected = async () => {
     const ids = selectedIds()
     setBusy(true)
@@ -413,6 +439,7 @@ export default function MediaGallery({
           onDownload={downloadSelected}
           onDelete={() => sel.count > 0 && setAskDelete(true)}
           onAddToAlbum={() => sel.count > 0 && setShowAlbumPicker(true)}
+          onFavorite={() => sel.count > 0 && favoriteSelected()}
         />
       )}
 
