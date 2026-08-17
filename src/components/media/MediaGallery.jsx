@@ -11,7 +11,7 @@ import SelectionBar from '../common/SelectionBar'
 import ConfirmModal from '../common/ConfirmModal'
 import AlbumPickerModal from './AlbumPickerModal'
 
-/** Kích hoạt tải file qua thẻ <a> ẩn (server ép Content-Disposition nên tải thẳng) */
+/** Kích hoạt tải file qua thẻ <a> ẩn */
 function triggerDownload(url) {
   const a = document.createElement('a')
   a.href = url
@@ -22,18 +22,27 @@ function triggerDownload(url) {
 }
 
 /**
- * Thư viện ảnh/video — tải TẤT CẢ file danh sách 1 lần duy nhất.
- * Thumbnail/ảnh chỉ load khi cuộn đến (lazy loading qua IntersectionObserver).
+ * Thư viện ảnh/video — infinite scroll, 1000 ảnh/batch.
  *
- *  • Luôn 5 ảnh/dòng, mỗi ảnh chừa ~5px xung quanh.
+ * Server trả mới nhất trước (DESC). FE reverse → cũ nhất ở đầu mảng, mới nhất
+ * ở cuối. Mở trang cuộn sẵn xuống đáy. Cuộn LÊN để xem ảnh cũ hơn.
+ *
+ * Khi đã cuộn qua 80% batch hiện tại (≈ gần đỉnh trang), tự fetch batch tiếp
+ * và PREPEND vào đầu mảng, giữ nguyên vị trí cuộn (không nhảy).
+ *
+ * Filter yêu thích xử lý hoàn toàn ở client → có animation biến mất/hiện lại.
+ *
+ *  • Luôn 5 ảnh/dòng.
+ *  • Thumbnail dùng loading="lazy" → trình duyệt tự lazy load khi cuộn đến.
  *  • Ảnh đã thả tim → viền ĐỎ.
- *  • Khi bật/tắt filter yêu thích → animation biến mất/hiện lại từng ảnh.
  */
 
 export const TAB_BAR_HEIGHT = 44
 
 const COLUMNS = 5
-const PAGE_SIZE = 200000
+const PAGE_SIZE = 1000
+/** Ngưỡng trigger: khi scrollY < 20% scrollHeight → fetch thêm */
+const LOAD_MORE_RATIO = 0.20
 
 function tileWidthFor(cols) {
   if (typeof window === 'undefined') return 120
@@ -43,12 +52,6 @@ function tileWidthFor(cols) {
   return Math.max(0, (w - pad - gap * (cols - 1)) / cols)
 }
 const SHARP_TILE_PX = 190
-
-/** HEIC/HEIF không render được trên Chrome/Firefox — luôn dùng thumbUrl (JPEG) */
-const isHeic = it =>
-  /\.hei[cf]$/i.test(it.originalName || '') ||
-  /\.hei[cf]$/i.test(it.url || '') ||
-  /heic|heif/i.test(it.contentType || '')
 
 export const toDateInput = d => {
   const pad = n => String(n).padStart(2, '0')
@@ -64,15 +67,25 @@ export default function MediaGallery({
   filterNonce = 0,
   albumId = null,
 }) {
-  // allItems = toàn bộ file lấy từ server, items = sau khi filter client-side (yêu thích)
-  const [allItems, setAllItems] = useState([])
-  const [items, setItems]       = useState([])
-  const [loading, setLoading]   = useState(true)
-  const [lightbox, setLightbox] = useState(null)
-  const [query, setQuery]       = useState('')
+  /*
+   * allItems = mảng gộp mọi batch đã fetch (cũ→mới, append-only).
+   * items    = allItems sau khi filter client-side (yêu thích).
+   */
+  const [allItems, setAllItems]     = useState([])
+  const [items, setItems]           = useState([])
+  const [loading, setLoading]       = useState(true)   // lần đầu
+  const [loadingMore, setLoadingMore] = useState(false) // batch tiếp
+  const [lightbox, setLightbox]     = useState(null)
+  const [query, setQuery]           = useState('')
 
-  const searchRef     = useRef(null)
-  const loadingRef    = useRef(false)
+  // Pagination state
+  const pageRef      = useRef(0)   // page đã fetch gần nhất
+  const totalPages   = useRef(1)   // tổng số page server trả
+  const hasMore      = useRef(true)
+  const loadingRef   = useRef(false)
+
+  // Scroll handling
+  const pendingScroll = useRef(null) // 'bottom' | { prevHeight }
   const lightboxOpenRef = useRef(false)
   lightboxOpenRef.current = lightbox !== null
 
@@ -80,75 +93,135 @@ export default function MediaGallery({
   const [favAnimating, setFavAnimating] = useState(false)
   const prevFav = useRef(onlyFav)
 
+  const searchRef = useRef(null)
   const sharp = tileWidthFor(COLUMNS) >= SHARP_TILE_PX
 
-  // Debounce search
+  // ── Debounce search ─────────────────────────────────────────────
   useEffect(() => {
     clearTimeout(searchRef.current)
     searchRef.current = setTimeout(() => setQuery(search), 400)
     return () => clearTimeout(searchRef.current)
   }, [search])
 
+  // ── Build filters (không gồm favorite — xử lý client) ──────────
   const buildFilters = useCallback(() => ({
-    // Không gửi favorite lên server nữa, filter ở client để có animation
     q: query,
     from: fromMs ?? null,
     to:   toMs ?? null,
     albumId: albumId ?? null,
   }), [query, fromMs, toMs, albumId])
 
+  // ── Fetch batch ─────────────────────────────────────────────────
   /**
-   * Tải toàn bộ danh sách file 1 lần. Chỉ gọi lại khi đổi filter server-side
-   * (search, date range, album). Filter yêu thích xử lý ở client.
+   * @param targetPage  page cần fetch (0 = mới nhất)
+   * @param reset       true = đổi filter → xóa hết, fetch lại từ page 0
    */
-  const load = useCallback(async () => {
+  const fetchBatch = useCallback(async (targetPage, reset) => {
     if (loadingRef.current) return
     loadingRef.current = true
-    setLoading(true)
+
+    if (reset) {
+      setLoading(true)
+      pendingScroll.current = 'bottom'
+    } else {
+      setLoadingMore(true)
+      pendingScroll.current = { prevHeight: document.documentElement.scrollHeight }
+    }
+
     try {
-      const res = await listMedia(0, PAGE_SIZE, buildFilters())
+      const res = await listMedia(targetPage, PAGE_SIZE, buildFilters())
       const env = res.data
       if (env && typeof env.code === 'number' && !(env.code >= 900 && env.code < 1000)) {
         throw new Error(env.message)
       }
       const d = env?.data ?? env
+      // Server trả DESC → reverse để cũ→mới
       const batch = [...(d.content || [])].reverse()
-      setAllItems(batch)
+
+      totalPages.current = d.totalPages || 1
+      pageRef.current    = d.currentPage ?? targetPage
+      hasMore.current    = (d.currentPage ?? targetPage) < (d.totalPages || 1) - 1
+
+      if (reset) {
+        setAllItems(batch)
+      } else {
+        // Prepend (batch cũ hơn lên đầu)
+        setAllItems(prev => [...batch, ...prev])
+      }
     } catch (e) {
+      pendingScroll.current = null
       onNotify?.(e.message || 'Không tải được thư viện', false)
     } finally {
       setLoading(false)
+      setLoadingMore(false)
       loadingRef.current = false
     }
   }, [buildFilters, onNotify])
 
-  // Fetch khi đổi filter server-side hoặc refreshKey
+  // ── Reset khi đổi filter / refreshKey ───────────────────────────
   useEffect(() => {
-    load()
+    pageRef.current = 0
+    hasMore.current = true
+    fetchBatch(0, true)
   }, [refreshKey, query, fromMs, toMs, albumId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Client-side filter: yêu thích
+  // ── Client-side filter: yêu thích ──────────────────────────────
   useEffect(() => {
-    // Detect animation transition
     if (prevFav.current !== onlyFav) {
       setFavAnimating(true)
       setTimeout(() => setFavAnimating(false), 350)
       prevFav.current = onlyFav
     }
-
-    if (onlyFav) {
-      setItems(allItems.filter(i => i.favorite))
-    } else {
-      setItems(allItems)
-    }
+    setItems(onlyFav ? allItems.filter(i => i.favorite) : allItems)
   }, [allItems, onlyFav])
 
-  // Scroll xuống đáy khi load lần đầu hoặc đổi filter
-  useEffect(() => {
-    if (!loading && items.length > 0) {
-      window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' })
+  // ── Scroll handling ─────────────────────────────────────────────
+  // Sau khi DOM cập nhật:
+  //   reset → cuộn xuống đáy (ảnh mới nhất)
+  //   prepend → giữ nguyên vị trí (bù chiều cao mới thêm)
+  useLayoutEffect(() => {
+    const action = pendingScroll.current
+    if (!action) return
+    pendingScroll.current = null
+
+    if (action === 'bottom') {
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' })
+      })
+      return
     }
-  }, [loading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Prepend — bù chiều cao vừa thêm để màn hình đứng yên
+    if (action.prevHeight != null) {
+      const delta = document.documentElement.scrollHeight - action.prevHeight
+      if (delta > 0) window.scrollTo(0, window.scrollY + delta)
+    }
+  }, [items])
+
+  // ── Infinite scroll: cuộn gần đỉnh → fetch batch tiếp ──────────
+  useEffect(() => {
+    const onScroll = () => {
+      if (lightboxOpenRef.current || loadingRef.current) return
+      if (!hasMore.current) return
+
+      const scrollH = document.documentElement.scrollHeight
+      const threshold = scrollH * LOAD_MORE_RATIO
+      if (window.scrollY < threshold) {
+        fetchBatch(pageRef.current + 1, false)
+      }
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [fetchBatch])
+
+  // Nếu nội dung chưa đầy màn hình → tự fetch thêm cho đủ cuộn
+  useEffect(() => {
+    if (loadingRef.current || loading) return
+    if (!hasMore.current) return
+    if (document.documentElement.scrollHeight <= window.innerHeight + 200) {
+      fetchBatch(pageRef.current + 1, false)
+    }
+  }, [items, loading, fetchBatch])
 
   // ── Thao tác ────────────────────────────────────────────────────
 
@@ -183,16 +256,14 @@ export default function MediaGallery({
     setAllItems(prev => prev.map(i => i.id === asset.id ? { ...i, favorite: next } : i))
     try {
       await favoriteMedia(asset.id, next)
-      if (onlyFav && !next) {
-        setLightbox(null)
-      }
+      if (onlyFav && !next) setLightbox(null)
     } catch {
       setAllItems(prev => prev.map(i => i.id === asset.id ? { ...i, favorite: !next } : i))
       onNotify?.('Không cập nhật được', false)
     }
   }
 
-  // ── Chọn nhiều để tải/xóa/album hàng loạt ─────────────────────
+  // ── Chọn nhiều ──────────────────────────────────────────────────
   const gridRef = useRef(null)
   const sel = useSweepSelect(gridRef)
   const [askDelete, setAskDelete] = useState(false)
@@ -234,7 +305,6 @@ export default function MediaGallery({
 
   const hasFilter = onlyFav || query || fromMs != null || albumId != null
   const groups = groupByDate(items, Date.now(), granularity)
-
   const showFullSkeleton = loading && items.length === 0
 
   return (
@@ -262,6 +332,11 @@ export default function MediaGallery({
       `}</style>
 
       <div className="pt-3" />
+
+      {/* Skeleton khi đang tải thêm batch cũ (nằm TRÊN grid) */}
+      {loadingMore && (
+        <div className="pt-1 pb-2"><SkeletonTiles count={10} /></div>
+      )}
 
       {showFullSkeleton ? (
         <div className="pt-1"><SkeletonTiles count={20} /></div>
