@@ -524,7 +524,8 @@ function MediaPickerModal({ onClose, onPick }) {
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [albums, setAlbums] = useState([])
-  const [albumId, setAlbumId] = useState('') // '' = tất cả
+  const [albumId, setAlbumId] = useState(null) // null = tất cả (chỉ khi chưa có album)
+  const [albumsReady, setAlbumsReady] = useState(false)
 
   const listRef = useRef(null)
   const sentinelRef = useRef(null)
@@ -541,19 +542,32 @@ function MediaPickerModal({ onClose, onPick }) {
     return () => clearTimeout(searchTimer.current)
   }, [search])
 
-  // Tải danh sách album một lần
+  // Tải danh sách album → mặc định chọn album đầu tiên nếu có
   useEffect(() => {
     listAlbums()
       .then(res => {
         const env = res.data
         const d = env?.data ?? env
-        setAlbums(Array.isArray(d) ? d : [])
+        const list = Array.isArray(d) ? d : []
+        setAlbums(list)
+        if (list.length > 0) {
+          setAlbumId(String(list[0].id))
+          setPage(0)
+        } else {
+          setAlbumId(null)
+        }
       })
-      .catch(() => setAlbums([]))
+      .catch(() => {
+        setAlbums([])
+        setAlbumId(null)
+      })
+      .finally(() => setAlbumsReady(true))
   }, [])
 
-  // Fetch media theo page / query / album
+  // Fetch media theo page / query / album — chờ albumsReady để tránh flash “tất cả”
   useEffect(() => {
+    if (!albumsReady) return
+
     let alive = true
     setLoading(true)
     loadingRef.current = true
@@ -578,15 +592,14 @@ function MediaPickerModal({ onClose, onPick }) {
       }
     })
     return () => { alive = false }
-  }, [query, page, albumId])
+  }, [query, page, albumId, albumsReady])
 
-  // Khi đổi album → reset về trang 0
   const onAlbumChange = e => {
-    setAlbumId(e.target.value)
+    setAlbumId(e.target.value || null)
     setPage(0)
   }
 
-  // Infinite scroll: sentinel chạm vùng nhìn thấy → tải trang tiếp
+  // Infinite scroll: sentinel vào vùng nhìn thấy → tải trang tiếp
   useEffect(() => {
     const root = listRef.current
     const sentinel = sentinelRef.current
@@ -602,7 +615,7 @@ function MediaPickerModal({ onClose, onPick }) {
     )
     io.observe(sentinel)
     return () => io.disconnect()
-  }, [hasMore, items.length]) // items.length để gắn lại sau khi list đổi
+  }, [hasMore, items.length])
 
   const fmtSize = b => {
     if (b < 1024) return `${b} B`
@@ -625,15 +638,17 @@ function MediaPickerModal({ onClose, onPick }) {
           </button>
         </div>
 
-        {/* Tìm kiếm + lọc album */}
+        {/* Load file theo album - chưa có album thì load tất cả */}
         <div className="shrink-0 px-5 py-3 border-b border-gray-100">
           <div className="flex gap-2 items-center">
             <select
-              value={albumId}
+              value={albumId ?? ''}
               onChange={onAlbumChange}
               className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-blue-400 bg-white"
             >
-              <option value="">Tất cả</option>
+              {albums.length === 0 && (
+                <option value="">Tất cả</option>
+              )}
               {albums.map(a => (
                 <option key={a.id} value={a.id}>
                   {a.name}{typeof a.count === 'number' ? ` (${a.count})` : ''}
@@ -667,7 +682,7 @@ function MediaPickerModal({ onClose, onPick }) {
             <p className="text-xs text-gray-300 text-center py-8">Không tìm thấy</p>
           )}
 
-          {/* Sentinel cho infinite scroll — ẩn nút "Tải thêm" */}
+          {/* Sentinel infinite scroll */}
           {hasMore && <div ref={sentinelRef} className="h-4" aria-hidden="true" />}
         </div>
       </div>

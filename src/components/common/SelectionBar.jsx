@@ -1,11 +1,22 @@
 /**
  * Thanh thao tác khi đang chọn nhiều mục — ghim đáy màn hình, kính mờ.
  * Dùng chung cho trang Hình ảnh và trang Tệp.
+ *
+ * albumAction: 'add' | 'remove'  — trong album thì nút thành Gỡ khỏi album
+ * favoriteAction: 'favorite' | 'unfavorite' — có file đã thích thì thành Bỏ thích
  */
 export default function SelectionBar({
   count, onDownload, onDelete, onCancel, onDeselectAll,
-  onAddToAlbum, onFavorite, busy = false,
+  onAddToAlbum, onRemoveFromAlbum, onFavorite,
+  albumAction = 'add',
+  favoriteAction = 'favorite',
+  busy = false,
 }) {
+  const isRemoveAlbum = albumAction === 'remove'
+  const isUnfavorite = favoriteAction === 'unfavorite'
+  const onAlbumClick = isRemoveAlbum ? onRemoveFromAlbum : onAddToAlbum
+  const showAlbumBtn = isRemoveAlbum ? !!onRemoveFromAlbum : !!onAddToAlbum
+
   return (
     <div className="fixed bottom-0 inset-x-0 z-40 bg-white/70 backdrop-blur-2xl
       border-t border-white/50 shadow-[0_-4px_24px_rgba(0,0,0,0.12)]"
@@ -28,21 +39,31 @@ export default function SelectionBar({
         <div className="ml-auto flex items-center gap-2">
           {onFavorite && (
             <button onClick={onFavorite} disabled={busy || count === 0}
-              className="h-10 px-4 rounded-xl text-sm font-semibold text-white bg-rose-600/90
-                border border-rose-400/50 shadow-lg shadow-rose-500/25 backdrop-blur-md
-                flex items-center gap-1.5 active:scale-95 transition disabled:opacity-50">
-              <span className="text-base leading-none">❤️</span>
-              <span className="hidden xs:inline sm:inline">Thích</span>
+              className={`h-10 px-4 rounded-xl text-sm font-semibold text-white
+                border shadow-lg backdrop-blur-md
+                flex items-center gap-1.5 active:scale-95 transition disabled:opacity-50
+                ${isUnfavorite
+                  ? 'bg-gray-600/90 border-gray-400/50 shadow-gray-500/25'
+                  : 'bg-rose-600/90 border-rose-400/50 shadow-rose-500/25'}`}>
+              <span className="text-base leading-none">{isUnfavorite ? '💔' : '❤️'}</span>
+              <span className="hidden xs:inline sm:inline">
+                {isUnfavorite ? 'Bỏ thích' : 'Thích'}
+              </span>
             </button>
           )}
 
-          {onAddToAlbum && (
-            <button onClick={onAddToAlbum} disabled={busy || count === 0}
-              className="h-10 px-4 rounded-xl text-sm font-semibold text-white bg-purple-600/90
-                border border-purple-400/50 shadow-lg shadow-purple-500/25 backdrop-blur-md
-                flex items-center gap-1.5 active:scale-95 transition disabled:opacity-50">
-              <span className="text-base leading-none">📂</span>
-              <span className="hidden xs:inline sm:inline">Album</span>
+          {showAlbumBtn && (
+            <button onClick={onAlbumClick} disabled={busy || count === 0}
+              className={`h-10 px-4 rounded-xl text-sm font-semibold text-white
+                border shadow-lg backdrop-blur-md
+                flex items-center gap-1.5 active:scale-95 transition disabled:opacity-50
+                ${isRemoveAlbum
+                  ? 'bg-amber-600/90 border-amber-400/50 shadow-amber-500/25'
+                  : 'bg-purple-600/90 border-purple-400/50 shadow-purple-500/25'}`}>
+              <span className="text-base leading-none">{isRemoveAlbum ? '📤' : '📂'}</span>
+              <span className="hidden xs:inline sm:inline">
+                {isRemoveAlbum ? 'Gỡ album' : 'Album'}
+              </span>
             </button>
           )}
 

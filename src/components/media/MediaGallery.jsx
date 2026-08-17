@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import {
   listMedia, deleteMedia, renameMedia, favoriteMedia, mediaUrl,
-  deleteMediaBatch, mediaZipUrl, favoriteMediaBatch,
+  deleteMediaBatch, mediaZipUrl, favoriteMediaBatch, removeFromAlbum,
 } from '../../services/api'
 import MediaLightbox from './MediaLightbox'
 import { groupByDate } from './groupByDate'
@@ -254,6 +254,12 @@ export default function MediaGallery({
 
   const selectedIds = () => [...sel.selected].map(Number)
 
+  /** true nếu trong selection có ≥1 file đã favorite → nút = bỏ thích */
+  const selectionHasFavorite = () => {
+    const idSet = new Set(selectedIds())
+    return allItems.some(i => idSet.has(i.id) && i.favorite)
+  }
+
   const downloadSelected = () => {
     const ids = selectedIds()
     if (ids.length === 0) return
@@ -261,27 +267,52 @@ export default function MediaGallery({
     onNotify?.(`Đang tải ${ids.length} mục...`)
   }
 
+  /**
+   * Có bất kỳ file đã favorite → bỏ thích cả batch.
+   * Tất cả chưa favorite → thích cả batch.
+   */
   const favoriteSelected = async () => {
     const ids = selectedIds()
     if (ids.length === 0) return
 
+    const unfavorite = selectionHasFavorite()
+    const next = !unfavorite
     setBusy(true)
     const idSet = new Set(ids)
 
-    // Optimistic update
     setAllItems(prev => prev.map(i =>
-      idSet.has(i.id) ? { ...i, favorite: true } : i
+      idSet.has(i.id) ? { ...i, favorite: next } : i
     ))
 
     try {
-      await favoriteMediaBatch(ids, true)
-      onNotify?.(`Đã thích ${ids.length} mục`)
+      await favoriteMediaBatch(ids, next)
+      onNotify?.(next
+        ? `Đã thích ${ids.length} mục`
+        : `Đã bỏ thích ${ids.length} mục`)
     } catch {
-      // Rollback
       setAllItems(prev => prev.map(i =>
-        idSet.has(i.id) ? { ...i, favorite: false } : i
+        idSet.has(i.id) ? { ...i, favorite: !next } : i
       ))
       onNotify?.('Cập nhật yêu thích thất bại', false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeFromAlbumSelected = async () => {
+    if (albumId == null) return
+    const ids = selectedIds()
+    if (ids.length === 0) return
+
+    setBusy(true)
+    try {
+      await removeFromAlbum(albumId, ids)
+      const rm = new Set(ids)
+      setAllItems(prev => prev.filter(i => !rm.has(i.id)))
+      onNotify?.(`Đã gỡ ${ids.length} mục khỏi album`)
+      sel.exit()
+    } catch {
+      onNotify?.('Gỡ khỏi album thất bại', false)
     } finally {
       setBusy(false)
     }
@@ -438,7 +469,10 @@ export default function MediaGallery({
           onDeselectAll={sel.clearStay}
           onDownload={downloadSelected}
           onDelete={() => sel.count > 0 && setAskDelete(true)}
+          albumAction={albumId != null ? 'remove' : 'add'}
           onAddToAlbum={() => sel.count > 0 && setShowAlbumPicker(true)}
+          onRemoveFromAlbum={() => sel.count > 0 && removeFromAlbumSelected()}
+          favoriteAction={selectionHasFavorite() ? 'unfavorite' : 'favorite'}
           onFavorite={() => sel.count > 0 && favoriteSelected()}
         />
       )}
