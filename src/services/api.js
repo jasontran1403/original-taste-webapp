@@ -87,7 +87,7 @@ export const login = (username, password) => {
 const dateParams = (fromDate, toDate, date) => {
   if (fromDate && toDate && fromDate !== toDate) return { fromDate, toDate }
   if (fromDate) return { date: fromDate }
-  if (date)     return { date }
+  if (date) return { date }
   return {}
 }
 
@@ -107,7 +107,7 @@ export const getStores = () => api.get('/api/pos/einvoice/stores')
 export const getSaleInvoiceOrders = (page = 0, size = 50, fromDate, toDate, type, q) => {
   const params = { page, size, ...dateParams(fromDate, toDate) }
   if (type) params.type = type
-  if (q)    params.q    = q
+  if (q) params.q = q
   return api.get('/api/pos/einvoice/sale/orders', { params })
 }
 
@@ -292,8 +292,8 @@ export const listMedia = (page = 0, size = 40, filters = {}) => {
   const params = { page, size }
   if (filters.favorite) params.favorite = true
   if (filters.from) params.from = filters.from
-  if (filters.to)   params.to   = filters.to
-  if (filters.q)    params.q    = filters.q
+  if (filters.to) params.to = filters.to
+  if (filters.q) params.q = filters.q
   if (filters.albumId) params.albumId = filters.albumId
   return api.get('/api/tools/media', { params })
 }
@@ -303,6 +303,13 @@ export const renameMedia = (id, name) =>
 
 export const favoriteMedia = (id, favorite) =>
   api.patch(`/api/tools/media/${id}/favorite`, { favorite })
+
+export function favoriteMediaBatch(ids, favorite = true) {
+  return api.post('/api/tools/media/favorite-batch', {
+    ids,
+    favorite,
+  })
+}
 
 export const uploadMedia = (files, onProgress) => {
   const form = new FormData()

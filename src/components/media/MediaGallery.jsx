@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import {
   listMedia, deleteMedia, renameMedia, favoriteMedia, mediaUrl,
-  deleteMediaBatch, mediaZipUrl,
+  deleteMediaBatch, mediaZipUrl, favoriteMediaBatch,
 } from '../../services/api'
 import MediaLightbox from './MediaLightbox'
 import { groupByDate } from './groupByDate'
@@ -60,16 +60,16 @@ export default function MediaGallery({
   filterNonce = 0,
   albumId = null,
 }) {
-  const [allItems, setAllItems]       = useState([])
-  const [items, setItems]             = useState([])
-  const [loading, setLoading]         = useState(true)
+  const [allItems, setAllItems] = useState([])
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
-  const [lightbox, setLightbox]       = useState(null)
-  const [query, setQuery]             = useState('')
+  const [lightbox, setLightbox] = useState(null)
+  const [query, setQuery] = useState('')
 
   // Pagination
-  const pageRef    = useRef(0)
-  const hasMore    = useRef(true)
+  const pageRef = useRef(0)
+  const hasMore = useRef(true)
   const loadingRef = useRef(false)
 
   // Scroll
@@ -101,7 +101,7 @@ export default function MediaGallery({
   const buildFilters = useCallback(() => ({
     q: query,
     from: fromMs ?? null,
-    to:   toMs ?? null,
+    to: toMs ?? null,
     albumId: albumId ?? null,
   }), [query, fromMs, toMs, albumId])
 
@@ -274,7 +274,7 @@ export default function MediaGallery({
     ))
 
     try {
-      await Promise.all(ids.map(id => favoriteMedia(id, true)))
+      await favoriteMediaBatch(ids, true)
       onNotify?.(`Đã thích ${ids.length} mục`)
     } catch {
       // Rollback
