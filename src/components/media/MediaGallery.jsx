@@ -11,7 +11,6 @@ import SelectionBar from '../common/SelectionBar'
 import ConfirmModal from '../common/ConfirmModal'
 import AlbumPickerModal from './AlbumPickerModal'
 
-/** Kích hoạt tải file qua thẻ <a> ẩn */
 function triggerDownload(url) {
   const a = document.createElement('a')
   a.href = url
@@ -22,27 +21,21 @@ function triggerDownload(url) {
 }
 
 /**
- * Thư viện ảnh/video — infinite scroll, 1000 ảnh/batch.
+ * Thư viện ảnh/video — infinite scroll, 100 ảnh/batch.
  *
- * Server trả mới nhất trước (DESC). FE reverse → cũ nhất ở đầu mảng, mới nhất
- * ở cuối. Mở trang cuộn sẵn xuống đáy. Cuộn LÊN để xem ảnh cũ hơn.
+ * Server trả mới nhất trước (DESC). FE reverse → cũ nhất ở đầu, mới nhất cuối.
+ * Mở trang cuộn sẵn xuống đáy. Cuộn LÊN → khi cách đỉnh < 600px → fetch batch
+ * tiếp và PREPEND, giữ nguyên vị trí cuộn.
  *
- * Khi đã cuộn qua 80% batch hiện tại (≈ gần đỉnh trang), tự fetch batch tiếp
- * và PREPEND vào đầu mảng, giữ nguyên vị trí cuộn (không nhảy).
- *
- * Filter yêu thích xử lý hoàn toàn ở client → có animation biến mất/hiện lại.
- *
- *  • Luôn 5 ảnh/dòng.
- *  • Thumbnail dùng loading="lazy" → trình duyệt tự lazy load khi cuộn đến.
- *  • Ảnh đã thả tim → viền ĐỎ.
+ * Filter yêu thích xử lý client-side → animation biến mất/hiện lại.
  */
 
 export const TAB_BAR_HEIGHT = 44
 
 const COLUMNS = 5
-const PAGE_SIZE = 1000
-/** Ngưỡng trigger: khi scrollY < 20% scrollHeight → fetch thêm */
-const LOAD_MORE_RATIO = 0.20
+const PAGE_SIZE = 100
+/** Khi scrollY < giá trị này (px) → fetch thêm batch cũ hơn */
+const SCROLL_TRIGGER = 600
 
 function tileWidthFor(cols) {
   if (typeof window === 'undefined') return 120
@@ -67,25 +60,26 @@ export default function MediaGallery({
   filterNonce = 0,
   albumId = null,
 }) {
-  /*
-   * allItems = mảng gộp mọi batch đã fetch (cũ→mới, append-only).
-   * items    = allItems sau khi filter client-side (yêu thích).
-   */
-  const [allItems, setAllItems]     = useState([])
-  const [items, setItems]           = useState([])
-  const [loading, setLoading]       = useState(true)   // lần đầu
-  const [loadingMore, setLoadingMore] = useState(false) // batch tiếp
-  const [lightbox, setLightbox]     = useState(null)
-  const [query, setQuery]           = useState('')
+  const [allItems, setAllItems]       = useState([])
+  const [items, setItems]             = useState([])
+  const [loading, setLoading]         = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [lightbox, setLightbox]       = useState(null)
+  const [query, setQuery]             = useState('')
 
-  // Pagination state
-  const pageRef      = useRef(0)   // page đã fetch gần nhất
-  const totalPages   = useRef(1)   // tổng số page server trả
-  const hasMore      = useRef(true)
-  const loadingRef   = useRef(false)
+  // Pagination
+  const pageRef    = useRef(0)
+  const hasMore    = useRef(true)
+  const loadingRef = useRef(false)
 
-  // Scroll handling
+  // Scroll
   const pendingScroll = useRef(null) // 'bottom' | { prevHeight }
+  /**
+   * cooldown = true ngay sau reset load, chặn scroll handler trigger load thêm.
+   * Chỉ tắt SAU KHI scrollTo bottom đã thực thi xong + ổn định.
+   */
+  const cooldown = useRef(true)
+
   const lightboxOpenRef = useRef(false)
   lightboxOpenRef.current = lightbox !== null
 
@@ -112,16 +106,13 @@ export default function MediaGallery({
   }), [query, fromMs, toMs, albumId])
 
   // ── Fetch batch ─────────────────────────────────────────────────
-  /**
-   * @param targetPage  page cần fetch (0 = mới nhất)
-   * @param reset       true = đổi filter → xóa hết, fetch lại từ page 0
-   */
   const fetchBatch = useCallback(async (targetPage, reset) => {
     if (loadingRef.current) return
     loadingRef.current = true
 
     if (reset) {
       setLoading(true)
+      cooldown.current = true          // chặn scroll handler
       pendingScroll.current = 'bottom'
     } else {
       setLoadingMore(true)
@@ -135,17 +126,14 @@ export default function MediaGallery({
         throw new Error(env.message)
       }
       const d = env?.data ?? env
-      // Server trả DESC → reverse để cũ→mới
       const batch = [...(d.content || [])].reverse()
 
-      totalPages.current = d.totalPages || 1
-      pageRef.current    = d.currentPage ?? targetPage
-      hasMore.current    = (d.currentPage ?? targetPage) < (d.totalPages || 1) - 1
+      pageRef.current = d.currentPage ?? targetPage
+      hasMore.current = (d.currentPage ?? targetPage) < (d.totalPages || 1) - 1
 
       if (reset) {
         setAllItems(batch)
       } else {
-        // Prepend (batch cũ hơn lên đầu)
         setAllItems(prev => [...batch, ...prev])
       }
     } catch (e) {
@@ -176,22 +164,22 @@ export default function MediaGallery({
   }, [allItems, onlyFav])
 
   // ── Scroll handling ─────────────────────────────────────────────
-  // Sau khi DOM cập nhật:
-  //   reset → cuộn xuống đáy (ảnh mới nhất)
-  //   prepend → giữ nguyên vị trí (bù chiều cao mới thêm)
   useLayoutEffect(() => {
     const action = pendingScroll.current
     if (!action) return
     pendingScroll.current = null
 
     if (action === 'bottom') {
+      // Dùng rAF đợi DOM paint xong rồi mới scroll
       requestAnimationFrame(() => {
         window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' })
+        // Đợi scroll ổn định rồi mới mở khóa infinite scroll
+        setTimeout(() => { cooldown.current = false }, 400)
       })
       return
     }
 
-    // Prepend — bù chiều cao vừa thêm để màn hình đứng yên
+    // Prepend — bù chiều cao vừa thêm để giữ nguyên vị trí
     if (action.prevHeight != null) {
       const delta = document.documentElement.scrollHeight - action.prevHeight
       if (delta > 0) window.scrollTo(0, window.scrollY + delta)
@@ -201,27 +189,18 @@ export default function MediaGallery({
   // ── Infinite scroll: cuộn gần đỉnh → fetch batch tiếp ──────────
   useEffect(() => {
     const onScroll = () => {
+      // Chặn khi: đang cooldown, đang load, lightbox mở, hết data
+      if (cooldown.current) return
       if (lightboxOpenRef.current || loadingRef.current) return
       if (!hasMore.current) return
 
-      const scrollH = document.documentElement.scrollHeight
-      const threshold = scrollH * LOAD_MORE_RATIO
-      if (window.scrollY < threshold) {
+      if (window.scrollY < SCROLL_TRIGGER) {
         fetchBatch(pageRef.current + 1, false)
       }
     }
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [fetchBatch])
-
-  // Nếu nội dung chưa đầy màn hình → tự fetch thêm cho đủ cuộn
-  useEffect(() => {
-    if (loadingRef.current || loading) return
-    if (!hasMore.current) return
-    if (document.documentElement.scrollHeight <= window.innerHeight + 200) {
-      fetchBatch(pageRef.current + 1, false)
-    }
-  }, [items, loading, fetchBatch])
 
   // ── Thao tác ────────────────────────────────────────────────────
 
