@@ -11,8 +11,8 @@ const SWIPE_THRESHOLD = 50   // px — dưới mức này coi như chạm nhầm
  * Ảnh: hiển thị vừa khung. Video: player có sẵn điều khiển của trình duyệt
  * (tua được nhờ backend phục vụ file qua static resource handler hỗ trợ Range).
  *
- * Vuốt trái/phải để chuyển, hoặc dùng nút ‹ ›, hoặc phím mũi tên trên desktop.
- * Vuốt trên VIDEO bị tắt để không tranh với thao tác tua của player.
+ * Vuốt trái/phải để chuyển (áp dụng cho cả ảnh lẫn video),
+ * hoặc dùng nút ‹ ›, hoặc phím mũi tên trên desktop.
  *
  * Thanh trên có: thả tim, đổi tên, tải về, xóa.
  * Đuôi file được backend giữ nguyên khi đổi tên — mất đuôi thì tải về máy
@@ -83,44 +83,44 @@ export default function MediaLightbox({
     const body = document.body
     const saved = {
       position: body.style.position,
-      top:      body.style.top,
-      left:     body.style.left,
-      right:    body.style.right,
-      width:    body.style.width,
+      top: body.style.top,
+      left: body.style.left,
+      right: body.style.right,
+      width: body.style.width,
       overflow: body.style.overflow,
     }
 
     body.style.position = 'fixed'
-    body.style.top   = `-${scrollY}px`
-    body.style.left  = '0'
+    body.style.top = `-${scrollY}px`
+    body.style.left = '0'
     body.style.right = '0'
     body.style.width = '100%'
     body.style.overflow = 'hidden'
 
     return () => {
       body.style.position = saved.position
-      body.style.top      = saved.top
-      body.style.left     = saved.left
-      body.style.right    = saved.right
-      body.style.width    = saved.width
+      body.style.top = saved.top
+      body.style.left = saved.left
+      body.style.right = saved.right
+      body.style.width = saved.width
       body.style.overflow = saved.overflow
       // Trả về đúng chỗ đang xem trước khi mở (thư viện phụ thuộc vị trí cuộn)
       window.scrollTo(0, scrollY)
     }
   }, [])
 
+  // Vuốt ngang để chuyển ảnh/video (áp dụng cho cả hai)
   const onTouchStart = e => {
-    if (isVideo) return
     touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
   }
 
   const onTouchEnd = e => {
-    if (isVideo || !touchStart.current) return
+    if (!touchStart.current) return
     const dx = e.changedTouches[0].clientX - touchStart.current.x
     const dy = e.changedTouches[0].clientY - touchStart.current.y
     touchStart.current = null
 
-    // Chỉ tính là vuốt ngang khi lệch ngang rõ hơn lệch dọc
+    // Chỉ tính là vuốt ngang khi lệch ngang rõ hơn lệch dọc + đủ xa
     if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dx) < Math.abs(dy)) return
     go(dx < 0 ? 1 : -1)
   }
@@ -256,7 +256,7 @@ export default function MediaLightbox({
           />
         )}
 
-        {/* Nút chuyển — ẩn trên màn hình hẹp vì đã có vuốt */}
+        {/* Nút chuyển — ẩn trên màn hình hẹp vì đã có vuốt 
         {canPrev && (
           <button onClick={() => go(-1)} aria-label="Trước"
             className="hidden sm:flex absolute left-3 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 text-white items-center justify-center text-2xl">
@@ -269,17 +269,18 @@ export default function MediaLightbox({
             ›
           </button>
         )}
+          */}
       </div>
 
-      {/* Thanh dưới — chuyển nhanh trên điện thoại */}
+      {/* Thanh dưới — chỉ hiện nút chuyển trên điện thoại 
       <div className="shrink-0 flex items-center justify-center gap-6 py-3 text-white/70 sm:hidden"
         style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
         <button onClick={() => go(-1)} disabled={!canPrev}
           className="px-5 py-2 rounded-full bg-white/10 disabled:opacity-30 text-lg">‹</button>
-        <span className="text-xs">{isVideo ? 'Video' : 'Vuốt để chuyển'}</span>
         <button onClick={() => go(1)} disabled={!canNext}
           className="px-5 py-2 rounded-full bg-white/10 disabled:opacity-30 text-lg">›</button>
       </div>
+      */}
     </div>
   )
 }

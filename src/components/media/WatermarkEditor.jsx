@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { fetchWatermarkLogo, watermarkAndSave, listMedia, mediaUrl } from '../../services/api'
+import { fetchWatermarkLogo, watermarkAndSave, listMedia, listAlbums, mediaUrl } from '../../services/api'
 
 /**
  * Gắn watermark lên ảnh hoặc video — TỰ NHẬN DIỆN loại file, không chia 2 tab.
@@ -42,25 +42,25 @@ const POSITION_PRESETS = [
 ]
 
 export default function WatermarkEditor({ onSaved, onNotify }) {
-  const [file, setFile]         = useState(null)
-  const [kind, setKind]         = useState('image')   // suy ra từ file, không cho chọn tay
-  const [previewUrl, setUrl]    = useState(null)
-  const [logo, setLogo]         = useState(null)
+  const [file, setFile] = useState(null)
+  const [kind, setKind] = useState('image')   // suy ra từ file, không cho chọn tay
+  const [previewUrl, setUrl] = useState(null)
+  const [logo, setLogo] = useState(null)
   const [settings, setSettings] = useState(DEFAULTS)
-  const [saving, setSaving]     = useState(false)
+  const [saving, setSaving] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [error, setError]       = useState('')
-  const [playing, setPlaying]   = useState(false)
-  const [firstFrame, setFirst]  = useState(false)
+  const [error, setError] = useState('')
+  const [playing, setPlaying] = useState(false)
+  const [firstFrame, setFirst] = useState(false)
   const [duration, setDuration] = useState(0)
-  const [current, setCurrent]   = useState(0)
+  const [current, setCurrent] = useState(0)
 
   const canvasRef = useRef(null)
-  const videoRef  = useRef(null)
-  const imgRef    = useRef(null)
-  const rafRef    = useRef(null)
-  const inputRef  = useRef(null)
-  const dragRef   = useRef(null)
+  const videoRef = useRef(null)
+  const imgRef = useRef(null)
+  const rafRef = useRef(null)
+  const inputRef = useRef(null)
+  const dragRef = useRef(null)
 
   const isVideo = kind === 'video'
 
@@ -523,19 +523,45 @@ function MediaPickerModal({ onClose, onPick }) {
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
+  const [albums, setAlbums] = useState([])
+  const [albumId, setAlbumId] = useState('') // '' = tất cả
 
+  const listRef = useRef(null)
+  const sentinelRef = useRef(null)
+  const loadingRef = useRef(false)
   const searchTimer = useRef(null)
+
+  // Debounce tìm kiếm theo tên
   useEffect(() => {
     clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => { setQuery(search); setPage(0) }, 400)
+    searchTimer.current = setTimeout(() => {
+      setQuery(search)
+      setPage(0)
+    }, 400)
     return () => clearTimeout(searchTimer.current)
   }, [search])
 
+  // Tải danh sách album một lần
+  useEffect(() => {
+    listAlbums()
+      .then(res => {
+        const env = res.data
+        const d = env?.data ?? env
+        setAlbums(Array.isArray(d) ? d : [])
+      })
+      .catch(() => setAlbums([]))
+  }, [])
+
+  // Fetch media theo page / query / album
   useEffect(() => {
     let alive = true
     setLoading(true)
+    loadingRef.current = true
+
     const filters = {}
     if (query) filters.q = query
+    if (albumId) filters.albumId = Number(albumId)
+
     listMedia(page, 30, filters).then(res => {
       if (!alive) return
       const env = res.data
@@ -544,9 +570,39 @@ function MediaPickerModal({ onClose, onPick }) {
       setItems(prev => page === 0 ? batch : [...prev, ...batch])
       setHasMore((d.currentPage || 0) < (d.totalPages || 0) - 1)
       setLoading(false)
-    }).catch(() => { if (alive) setLoading(false) })
+      loadingRef.current = false
+    }).catch(() => {
+      if (alive) {
+        setLoading(false)
+        loadingRef.current = false
+      }
+    })
     return () => { alive = false }
-  }, [query, page])
+  }, [query, page, albumId])
+
+  // Khi đổi album → reset về trang 0
+  const onAlbumChange = e => {
+    setAlbumId(e.target.value)
+    setPage(0)
+  }
+
+  // Infinite scroll: sentinel chạm vùng nhìn thấy → tải trang tiếp
+  useEffect(() => {
+    const root = listRef.current
+    const sentinel = sentinelRef.current
+    if (!root || !sentinel) return
+
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasMore && !loadingRef.current) {
+          setPage(p => p + 1)
+        }
+      },
+      { root, rootMargin: '120px', threshold: 0 }
+    )
+    io.observe(sentinel)
+    return () => io.disconnect()
+  }, [hasMore, items.length]) // items.length để gắn lại sau khi list đổi
 
   const fmtSize = b => {
     if (b < 1024) return `${b} B`
@@ -569,13 +625,25 @@ function MediaPickerModal({ onClose, onPick }) {
           </button>
         </div>
 
+        {/* Tìm kiếm + lọc album */}
         <div className="shrink-0 px-5 py-3 border-b border-gray-100">
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Tìm theo tên file..."
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-blue-400" />
+          <div className="flex gap-2 items-center">
+            <select
+              value={albumId}
+              onChange={onAlbumChange}
+              className="flex-1 min-w-0 px-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-blue-400 bg-white"
+            >
+              <option value="">Tất cả</option>
+              {albums.map(a => (
+                <option key={a.id} value={a.id}>
+                  {a.name}{typeof a.count === 'number' ? ` (${a.count})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-1.5">
+        <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto px-5 py-3 space-y-1.5">
           {items.map(it => (
             <button key={it.id} onClick={() => onPick(it)}
               className="w-full flex items-center gap-3 p-2.5 rounded-xl border border-gray-100
@@ -592,14 +660,15 @@ function MediaPickerModal({ onClose, onPick }) {
             </button>
           ))}
 
-          {loading && <p className="text-xs text-gray-300 text-center py-4">Đang tải...</p>}
-          {!loading && items.length === 0 && <p className="text-xs text-gray-300 text-center py-8">Không tìm thấy</p>}
-          {hasMore && !loading && (
-            <button onClick={() => setPage(p => p + 1)}
-              className="w-full py-2 text-xs text-blue-600 font-semibold hover:bg-blue-50 rounded-lg">
-              Tải thêm...
-            </button>
+          {loading && (
+            <p className="text-xs text-gray-300 text-center py-4">Đang tải...</p>
           )}
+          {!loading && items.length === 0 && (
+            <p className="text-xs text-gray-300 text-center py-8">Không tìm thấy</p>
+          )}
+
+          {/* Sentinel cho infinite scroll — ẩn nút "Tải thêm" */}
+          {hasMore && <div ref={sentinelRef} className="h-4" aria-hidden="true" />}
         </div>
       </div>
     </div>

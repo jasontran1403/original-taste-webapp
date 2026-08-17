@@ -18,27 +18,27 @@ import { SkeletonStyles } from '../../components/common/Skeleton'
  */
 
 const TABS = [
-  { key: 'library',   icon: '🖼️', label: 'Hình ảnh' },
-  { key: 'files',     icon: '📁', label: 'Tệp' },
-  { key: 'office',    icon: '📊', label: 'Office' },
+  { key: 'library', icon: '🖼️', label: 'Hình ảnh' },
   { key: 'watermark', icon: '💧', label: 'Watermark' },
-  { key: 'todo',      icon: '✅', label: 'Todo' },
+  { key: 'files', icon: '📁', label: 'Tệp' },
+  { key: 'office', icon: '📊', label: 'Office' },
+  { key: 'todo', icon: '✅', label: 'Todo' },
 ]
 
 const FULL_BLEED = new Set(['office', 'watermark', 'todo'])
 
 const GRANS = [
-  { key: 'year',  label: 'Năm' },
+  { key: 'year', label: 'Năm' },
   { key: 'month', label: 'Tháng' },
-  { key: 'day',   label: 'Ngày' },
+  { key: 'day', label: 'Ngày' },
 ]
 
 /** Mốc bắt đầu của năm/tháng/ngày HIỆN TẠI (epoch ms) */
 function periodFrom(gran) {
   const d = new Date()
-  if (gran === 'day')   { d.setHours(0, 0, 0, 0); return d.getTime() }
+  if (gran === 'day') { d.setHours(0, 0, 0, 0); return d.getTime() }
   if (gran === 'month') return new Date(d.getFullYear(), d.getMonth(), 1).getTime()
-  if (gran === 'year')  return new Date(d.getFullYear(), 0, 1).getTime()
+  if (gran === 'year') return new Date(d.getFullYear(), 0, 1).getTime()
   return null
 }
 
@@ -48,13 +48,13 @@ export default function MediaPage() {
   const [toast, setToast] = useState(null)
 
   // Bộ điều khiển thư viện
-  const [showUpload, setUpload]     = useState(false)
-  const [onlyFav, setOnlyFav]       = useState(false)
+  const [showUpload, setUpload] = useState(false)
+  const [onlyFav, setOnlyFav] = useState(false)
   const [showSearch, setShowSearch] = useState(false)
-  const [search, setSearch]         = useState('')
-  const [dateOn, setDateOn]         = useState(false)
-  const [from, setFrom]             = useState('')
-  const [to, setTo]                 = useState('')
+  const [search, setSearch] = useState('')
+  const [dateOn, setDateOn] = useState(false)
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
 
   // Album filter
   const [albumId, setAlbumId] = useState(null)
@@ -115,7 +115,7 @@ export default function MediaPage() {
     toMs = null
   } else if (dateOn && from && to) {
     fromMs = new Date(from + 'T00:00:00').getTime()
-    toMs   = new Date(to   + 'T23:59:59').getTime()
+    toMs = new Date(to + 'T23:59:59').getTime()
   }
 
   const isLibrary = tab === 'library'
@@ -168,19 +168,19 @@ export default function MediaPage() {
               <span className="text-base leading-none">＋</span> Tải lên
             </button>
 
-            <button onClick={() => setOnlyFav(f => !f)}
-              className={`${glassBtn} ${onlyFav
-                ? 'bg-rose-500/20 border-rose-300/60 text-rose-600'
-                : 'bg-white/50 border-white/60 text-gray-600'}`}>
-              <span className="text-base leading-none">{onlyFav ? '❤️' : '🤍'}</span> Yêu thích
-            </button>
-
             <AlbumDropdown
               activeAlbumId={albumId}
               onSelect={setAlbumId}
               onNotify={notify}
               glassBtn={glassBtn}
             />
+
+            <button onClick={() => setOnlyFav(f => !f)}
+              className={`${glassBtn} ${onlyFav
+                ? 'bg-rose-500/20 border-rose-300/60 text-rose-600'
+                : 'bg-white/50 border-white/60 text-gray-600'}`}>
+              <span className="text-base leading-none">{onlyFav ? '❤️' : '🤍'}</span> Yêu thích
+            </button>
 
             <button onClick={() => setShowSearch(v => !v)}
               className={`${glassBtn} ${showSearch || dateOn || search
@@ -235,7 +235,7 @@ export default function MediaPage() {
           />
         )}
 
-        {tab === 'files'  && <FilesBrowser onNotify={notify} />}
+        {tab === 'files' && <FilesBrowser onNotify={notify} />}
         {tab === 'office' && <OfficeWorkspace onNotify={notify} />}
         {tab === 'watermark' && (
           <div className="pt-3">
