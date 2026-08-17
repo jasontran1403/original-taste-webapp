@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   listMedia, deleteMedia, renameMedia, favoriteMedia, mediaUrl,
   deleteMediaBatch, mediaZipUrl,
@@ -23,9 +23,9 @@ function triggerDownload(url) {
 /**
  * Thư viện ảnh/video — infinite scroll, 100 ảnh/batch.
  *
- * Server trả mới nhất trước (DESC). FE reverse → cũ nhất ở đầu, mới nhất cuối.
- * Mở trang cuộn sẵn xuống đáy. Cuộn LÊN → khi cách đỉnh < 600px → fetch batch
- * tiếp và PREPEND, giữ nguyên vị trí cuộn.
+ * Server trả mới nhất trước (DESC) → giữ nguyên: mới nhất ở trên cùng.
+ * Load trang → ở top (không cần scroll).
+ * Cuộn XUỐNG → khi đã scroll qua ~80% nội dung hiện tại → fetch batch cũ hơn và APPEND.
  *
  * Filter yêu thích xử lý client-side → animation biến mất/hiện lại.
  */
@@ -34,8 +34,8 @@ export const TAB_BAR_HEIGHT = 44
 
 const COLUMNS = 5
 const PAGE_SIZE = 100
-/** Khi scrollY < giá trị này (px) → fetch thêm batch cũ hơn */
-const SCROLL_TRIGGER = 600
+/** Khi đã scroll xuống > 80% chiều cao cuộn được → fetch thêm */
+const SCROLL_RATIO_TRIGGER = 0.8
 
 function tileWidthFor(cols) {
   if (typeof window === 'undefined') return 120
@@ -72,11 +72,9 @@ export default function MediaGallery({
   const hasMore    = useRef(true)
   const loadingRef = useRef(false)
 
-  // Scroll
-  const pendingScroll = useRef(null) // 'bottom' | { prevHeight }
   /**
    * cooldown = true ngay sau reset load, chặn scroll handler trigger load thêm.
-   * Chỉ tắt SAU KHI scrollTo bottom đã thực thi xong + ổn định.
+   * Tắt sau khi DOM ổn định.
    */
   const cooldown = useRef(true)
 
@@ -112,11 +110,9 @@ export default function MediaGallery({
 
     if (reset) {
       setLoading(true)
-      cooldown.current = true          // chặn scroll handler
-      pendingScroll.current = 'bottom'
+      cooldown.current = true
     } else {
       setLoadingMore(true)
-      pendingScroll.current = { prevHeight: document.documentElement.scrollHeight }
     }
 
     try {
@@ -126,7 +122,8 @@ export default function MediaGallery({
         throw new Error(env.message)
       }
       const d = env?.data ?? env
-      const batch = [...(d.content || [])].reverse()
+      // Giữ nguyên thứ tự server: mới nhất trước
+      const batch = d.content || []
 
       pageRef.current = d.currentPage ?? targetPage
       hasMore.current = (d.currentPage ?? targetPage) < (d.totalPages || 1) - 1
@@ -134,15 +131,20 @@ export default function MediaGallery({
       if (reset) {
         setAllItems(batch)
       } else {
-        setAllItems(prev => [...batch, ...prev])
+        // APPEND batch cũ hơn vào cuối
+        setAllItems(prev => [...prev, ...batch])
       }
     } catch (e) {
-      pendingScroll.current = null
       onNotify?.(e.message || 'Không tải được thư viện', false)
     } finally {
       setLoading(false)
       setLoadingMore(false)
       loadingRef.current = false
+
+      // Mở khóa infinite scroll sau khi DOM ổn định
+      if (reset) {
+        setTimeout(() => { cooldown.current = false }, 350)
+      }
     }
   }, [buildFilters, onNotify])
 
@@ -163,41 +165,25 @@ export default function MediaGallery({
     setItems(onlyFav ? allItems.filter(i => i.favorite) : allItems)
   }, [allItems, onlyFav])
 
-  // ── Scroll handling ─────────────────────────────────────────────
-  useLayoutEffect(() => {
-    const action = pendingScroll.current
-    if (!action) return
-    pendingScroll.current = null
-
-    if (action === 'bottom') {
-      // Dùng rAF đợi DOM paint xong rồi mới scroll
-      requestAnimationFrame(() => {
-        window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' })
-        // Đợi scroll ổn định rồi mới mở khóa infinite scroll
-        setTimeout(() => { cooldown.current = false }, 400)
-      })
-      return
-    }
-
-    // Prepend — bù chiều cao vừa thêm để giữ nguyên vị trí
-    if (action.prevHeight != null) {
-      const delta = document.documentElement.scrollHeight - action.prevHeight
-      if (delta > 0) window.scrollTo(0, window.scrollY + delta)
-    }
-  }, [items])
-
-  // ── Infinite scroll: cuộn gần đỉnh → fetch batch tiếp ──────────
+  // ── Infinite scroll: cuộn xuống ~80% → fetch batch tiếp ────────
   useEffect(() => {
     const onScroll = () => {
-      // Chặn khi: đang cooldown, đang load, lightbox mở, hết data
       if (cooldown.current) return
       if (lightboxOpenRef.current || loadingRef.current) return
       if (!hasMore.current) return
 
-      if (window.scrollY < SCROLL_TRIGGER) {
+      const el = document.documentElement
+      const maxScroll = el.scrollHeight - window.innerHeight
+
+      // Không có vùng cuộn → không trigger
+      if (maxScroll <= 0) return
+
+      // Đã scroll xuống > 80% → fetch thêm
+      if (window.scrollY / maxScroll > SCROLL_RATIO_TRIGGER) {
         fetchBatch(pageRef.current + 1, false)
       }
     }
+
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [fetchBatch])
@@ -312,11 +298,6 @@ export default function MediaGallery({
 
       <div className="pt-3" />
 
-      {/* Skeleton khi đang tải thêm batch cũ (nằm TRÊN grid) */}
-      {loadingMore && (
-        <div className="pt-1 pb-2"><SkeletonTiles count={10} /></div>
-      )}
-
       {showFullSkeleton ? (
         <div className="pt-1"><SkeletonTiles count={20} /></div>
       ) : !loading && items.length === 0 ? (
@@ -393,6 +374,11 @@ export default function MediaGallery({
           </section>
         ))}
         </div>
+      )}
+
+      {/* Skeleton khi đang tải thêm batch cũ (nằm DƯỚI grid) */}
+      {loadingMore && (
+        <div className="pt-2 pb-4"><SkeletonTiles count={10} /></div>
       )}
 
       {lightbox !== null && items[lightbox] && (
