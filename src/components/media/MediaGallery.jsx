@@ -38,7 +38,7 @@ function triggerDownload(url) {
 export const TAB_BAR_HEIGHT = 44
 
 const COLUMNS = 5
-const PAGE_SIZE = 30
+const PAGE_SIZE = 100000
 const FILL_TARGET = 30
 const SCROLL_TRIGGER = 400   // cách đỉnh dưới ngưỡng này thì tải thêm
 
