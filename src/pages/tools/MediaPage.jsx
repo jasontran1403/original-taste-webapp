@@ -6,12 +6,13 @@ import FilesBrowser from '../../components/files/FilesBrowser'
 import OfficeWorkspace from '../../components/office/OfficeWorkspace'
 import WatermarkEditor from '../../components/media/WatermarkEditor'
 import TodoBoard from '../../components/todo/TodoBoard'
+import AlbumDropdown from '../../components/media/AlbumDropdown'
 import { SkeletonStyles } from '../../components/common/Skeleton'
 
 /**
  * Bộ tiện ích: Hình ảnh · Tệp · Office · Watermark.
  *
- * PANEL trên (dòng tab + 3 nút chức năng full-width) và THANH LỌC dưới (Năm/
+ * PANEL trên (dòng tab + 4 nút chức năng full-width) và THANH LỌC dưới (Năm/
  * Tháng/Ngày) đều dùng hiệu ứng kính mờ (glassmorphism) và tự trượt ẩn khi
  * cuộn, hiện lại khi ngừng cuộn.
  */
@@ -54,6 +55,9 @@ export default function MediaPage() {
   const [dateOn, setDateOn]         = useState(false)
   const [from, setFrom]             = useState('')
   const [to, setTo]                 = useState('')
+
+  // Album filter
+  const [albumId, setAlbumId] = useState(null)
 
   // Lọc theo Năm/Tháng/Ngày — mặc định KHÔNG chọn (null)
   const [activeGran, setActiveGran] = useState(null)
@@ -105,12 +109,10 @@ export default function MediaPage() {
   }
 
   // Gộp thành mốc lọc gửi xuống gallery
-  let fromMs = null, toMs = null, expandable = false, granularity = 'auto'
+  let fromMs = null, toMs = null
   if (activeGran) {
     fromMs = periodFrom(activeGran)
     toMs = null
-    expandable = true
-    granularity = activeGran
   } else if (dateOn && from && to) {
     fromMs = new Date(from + 'T00:00:00').getTime()
     toMs   = new Date(to   + 'T23:59:59').getTime()
@@ -158,7 +160,7 @@ export default function MediaPage() {
           <div className="ml-auto shrink-0 pl-2" />
         </div>
 
-        {/* Dòng 2 — 3 nút chức năng, FULL WIDTH, kính mờ (chỉ tab Hình ảnh) */}
+        {/* Dòng 2 — 4 nút chức năng, FULL WIDTH, kính mờ (chỉ tab Hình ảnh) */}
         {isLibrary && (
           <div className="w-full px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2 border-t border-white/40">
             <button onClick={() => setUpload(true)}
@@ -172,6 +174,13 @@ export default function MediaPage() {
                 : 'bg-white/50 border-white/60 text-gray-600'}`}>
               <span className="text-base leading-none">{onlyFav ? '❤️' : '🤍'}</span> Yêu thích
             </button>
+
+            <AlbumDropdown
+              activeAlbumId={albumId}
+              onSelect={setAlbumId}
+              onNotify={notify}
+              glassBtn={glassBtn}
+            />
 
             <button onClick={() => setShowSearch(v => !v)}
               className={`${glassBtn} ${showSearch || dateOn || search
@@ -219,9 +228,10 @@ export default function MediaPage() {
             search={search}
             fromMs={fromMs}
             toMs={toMs}
-            granularity={granularity}
-            expandable={expandable}
+            granularity={activeGran || 'auto'}
+            expandable={!!activeGran}
             filterNonce={filterNonce}
+            albumId={albumId}
           />
         )}
 

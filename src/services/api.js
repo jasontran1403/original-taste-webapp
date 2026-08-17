@@ -294,6 +294,7 @@ export const listMedia = (page = 0, size = 40, filters = {}) => {
   if (filters.from) params.from = filters.from
   if (filters.to)   params.to   = filters.to
   if (filters.q)    params.q    = filters.q
+  if (filters.albumId) params.albumId = filters.albumId
   return api.get('/api/tools/media', { params })
 }
 
@@ -392,6 +393,16 @@ export const deleteMediaBatch = ids =>
 /** URL tải nhiều ảnh/video về dưới dạng 1 file zip (server ép Content-Disposition) */
 export const mediaZipUrl = ids =>
   `${BASE}/api/tools/media/download-zip?ids=${ids.join(',')}`
+
+// ═══════════════════ ALBUM ═══════════════════
+export const listAlbums = () => api.get('/api/tools/media/albums')
+export const createAlbum = name => api.post('/api/tools/media/albums', { name })
+export const deleteAlbum = id => api.delete(`/api/tools/media/albums/${id}`)
+export const renameAlbum = (id, name) => api.patch(`/api/tools/media/albums/${id}/name`, { name })
+export const addToAlbum = (albumId, assetIds) =>
+  api.post(`/api/tools/media/albums/${albumId}/add`, { assetIds })
+export const removeFromAlbum = (albumId, assetIds) =>
+  api.post(`/api/tools/media/albums/${albumId}/remove`, { assetIds })
 
 /** Gắn watermark rồi lưu thẳng vào thư viện, trả về metadata của file mới */
 export const watermarkAndSave = (file, settings, onProgress) => {
